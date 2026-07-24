@@ -1,0 +1,10 @@
+{
+  "name": "Future Floor Plans",
+  "short_name": "Floor Plans",
+  "description": "Offline-first on-site floor-plan drawing for energy assessors.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#edf1f3",
+  "theme_color": "#102332",
+  "icons": [{ "src": "./assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

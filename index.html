@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#102332" />
+    <meta name="description" content="Offline-first on-site floor-plan drawing for domestic energy assessors." />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./assets/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./assets/icon.svg" />
+    <link rel="stylesheet" href="./styles.css" />
+    <title>Future Floor Plans</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <a class="brand" href="./" aria-label="Future Floor Plans home">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span><strong>Future</strong><small>Floor Plans</small></span>
+        </a>
+        <div class="header-title"><span class="eyebrow">On-site assessor tool</span><strong>Plan editor</strong></div>
+        <div class="header-actions">
+          <span class="save-state" id="saveState" aria-live="polite">Saved locally</span>
+          <button class="icon-button" data-action="undo" title="Undo" aria-label="Undo">↶</button>
+          <button class="icon-button" data-action="redo" title="Redo" aria-label="Redo">↷</button>
+          <button class="primary-button" data-action="export-png">Export plan</button>
+        </div>
+      </header>
+
+      <aside class="panel controls-panel" aria-label="Plan controls">
+        <section class="panel-section plan-details">
+          <div class="section-label">01 · Plan</div>
+          <label>Property address<input id="addressInput" type="text" placeholder="e.g. 14 Orchard Lane" autocomplete="street-address" /></label>
+          <div class="two-up">
+            <label>Postcode<input id="postcodeInput" type="text" placeholder="PR1 2AB" autocomplete="postal-code" /></label>
+            <label>North <span id="northReadout">0°</span><input id="northInput" type="range" min="0" max="359" value="0" /></label>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-header"><div class="section-label">02 · Storeys</div><button class="text-button" data-action="duplicate-storey">Duplicate</button></div>
+          <div id="storeyTabs" class="segmented" aria-label="Choose storey"></div>
+          <button class="secondary-button full-width" data-action="new-storey">+ Add storey</button>
+        </section>
+
+        <section class="panel-section tool-section">
+          <div class="section-label">03 · Draw</div>
+          <div class="tool-grid" role="toolbar" aria-label="Drawing tools">
+            <button class="tool-button" data-tool="box"><b>□</b>Box footprint</button>
+            <button class="tool-button" data-tool="extend"><b>⊞</b>Add extension</button>
+            <button class="tool-button active" data-tool="select"><b>⌁</b>Select / pan</button>
+            <button class="tool-button" data-tool="draw"><b>⌗</b>Trace walls</button>
+            <button class="tool-button" data-tool="opening"><b>▣</b>Add opening</button>
+            <button class="tool-button" data-tool="north"><b>↑</b>Set north</button>
+          </div>
+          <label class="dimension-field">Trace-wall length <span>metres</span><div><input id="dimensionInput" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Optional" /><button class="mini-button" data-action="clear-dimension" aria-label="Clear entered wall length">×</button></div></label>
+          <label class="toggle-row"><input id="orthogonalInput" type="checkbox" checked /><span>Orthogonal lock</span><em>⌘</em></label>
+        </section>
+
+        <section class="panel-section quick-actions">
+          <div class="section-label">Quick actions</div>
+          <div class="action-grid">
+            <button class="secondary-button" data-action="fit-plan">Fit plan</button>
+            <button class="secondary-button" data-action="clear-outline">Clear storey</button>
+            <button class="secondary-button" data-action="sample-plan">Load example</button>
+            <button class="secondary-button" data-action="export-json">Data export</button>
+          </div>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <div class="workspace-topbar">
+          <div><span class="eyebrow" id="storeyKicker">Ground floor</span><strong id="instructionText">Tap and drag to pan · tap a wall to inspect it</strong></div>
+          <div class="canvas-status"><span class="dot"></span><span id="zoomReadout">100%</span><button data-action="zoom-in" aria-label="Zoom in">+</button><button data-action="zoom-out" aria-label="Zoom out">−</button></div>
+        </div>
+        <div class="canvas-frame" id="canvasFrame">
+          <canvas id="planCanvas" aria-label="Floor plan drawing canvas">Your browser does not support the canvas element.</canvas>
+          <div class="canvas-hint" id="canvasHint"><b>Start with a box</b><span>Choose <strong>Box footprint</strong>, drag a rough rectangle, then enter its exact width and depth in metres.</span></div>
+          <div class="north-indicator" id="northIndicator" aria-hidden="true"><span>↑</span><small>N</small></div>
+          <div class="scale-indicator"><span id="scaleBar"></span><small id="scaleLabel">1 m</small></div>
+        </div>
+        <footer class="metrics-bar" aria-live="polite">
+          <div><span>Floor area</span><strong id="floorAreaMetric">0.00 m²</strong></div>
+          <div><span>Heat loss perimeter</span><strong id="hlpMetric">0.00 m</strong></div>
+          <div><span>Net wall area</span><strong id="wallAreaMetric">0.00 m²</strong></div>
+          <div><span>Openings</span><strong id="openingMetric">0</strong></div>
+        </footer>
+      </main>
+
+      <aside class="panel inspector-panel" aria-label="Selected item inspector">
+        <div class="inspector-title"><div><span class="section-label">04 · Inspect</span><h2 id="inspectorHeading">Plan review</h2></div><span class="selection-badge" id="selectionBadge">Plan</span></div>
+        <div id="inspectorContent" class="inspector-content"></div>
+        <section class="warnings-section">
+          <div class="section-header"><div class="section-label">Checks</div><span id="warningCount" class="warning-count">0</span></div>
+          <ul id="warningsList" class="warnings-list"></ul>
+        </section>
+      </aside>
+    </div>
+
+    <dialog id="confirmDialog" class="app-dialog">
+      <form method="dialog">
+        <span class="section-label">Confirm action</span>
+        <h2 id="dialogTitle">Clear this storey?</h2>
+        <p id="dialogMessage">This removes the outline and its openings from the active storey.</p>
+        <div class="dialog-actions"><button value="cancel" class="secondary-button">Cancel</button><button id="dialogConfirm" value="confirm" class="primary-button">Clear storey</button></div>
+      </form>
+    </dialog>
+
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>
