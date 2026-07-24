@@ -46,11 +46,16 @@
         <section class="panel-section tool-section">
           <div class="section-label">03 · Draw</div>
           <div class="tool-grid" role="toolbar" aria-label="Drawing tools">
-            <button class="tool-button" data-tool="box"><b>□</b>Draw room</button>
-            <button class="tool-button" data-tool="extend"><b>⊞</b>Add room</button>
+            <button class="tool-button" data-tool="box"><b>□</b>Draw shell</button>
+            <button class="tool-button" data-tool="extend"><b>⊞</b>Extend shell</button>
             <button class="tool-button active" data-tool="select"><b>⌁</b>Select / pan</button>
-            <button class="tool-button" data-tool="draw"><b>⌗</b>Quick walls</button>
-            <button class="tool-button" data-tool="opening"><b>▣</b>Add opening</button>
+            <button class="tool-button" data-tool="room"><b>▧</b>Add room</button>
+            <button class="tool-button" data-tool="partition"><b>╋</b>Draw internal wall</button>
+            <button class="tool-button" data-tool="split"><b>+</b>Split wall</button>
+            <button class="tool-button" data-tool="door"><b>⌒</b>Add door</button>
+            <button class="tool-button" data-tool="window"><b>▣</b>Add window</button>
+            <button class="tool-button" data-tool="heating"><b>♨</b>Add heating</button>
+            <button class="tool-button" data-tool="draw"><b>⌗</b>Trace shell</button>
             <button class="tool-button" data-tool="north"><b>↑</b>Set north</button>
           </div>
           <label class="dimension-field">Trace-wall length <span>metres</span><div><input id="dimensionInput" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Optional" /><button class="mini-button" data-action="clear-dimension" aria-label="Clear entered wall length">×</button></div></label>
@@ -75,7 +80,7 @@
         </div>
         <div class="canvas-frame" id="canvasFrame">
           <canvas id="planCanvas" aria-label="Floor plan drawing canvas">Your browser does not support the canvas element.</canvas>
-          <div class="canvas-hint" id="canvasHint"><b>Draw the first room</b><span>Drag a rough rectangle, then tap the on-plan measurements to enter its exact dimensions.</span></div>
+          <div class="canvas-hint" id="canvasHint"><b>Draw the external shell</b><span>Drag the measured building outline first. Then add named rooms, internal walls, doors and retrofit survey items inside it.</span></div>
           <form class="dimension-popover hidden" id="dimensionPopover" aria-label="Set a measurement"></form>
           <button class="canvas-quick-action hidden" id="finishOutlineButton" type="button" data-action="finish-outline">Finish shape</button>
           <div class="north-indicator" id="northIndicator" aria-hidden="true"><span>↑</span><small>N</small></div>

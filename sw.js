@@ -1,4 +1,4 @@
-const CACHE = 'future-floor-plans-v3';
+const CACHE = 'future-floor-plans-v5';
 const APP_SHELL = ['./', './index.html', './styles.css', './js/app.js', './js/geometry.js', './js/storage.js', './manifest.webmanifest', './assets/icon.svg'];
 
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())));

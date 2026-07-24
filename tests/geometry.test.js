@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { boxesTouchOrOverlap, createPlan, createStorey, derivePlan, makeOpening, moveAxisAlignedWall, moveVertex, outlineFromBoxes, polygonArea, resizeWall, syncWalls, wallOrientation } from '../js/geometry.js';
+import { boxesTouchOrOverlap, createPlan, createRoom, createStorey, derivePlan, makeOpening, moveAxisAlignedWall, moveVertex, outlineFromBoxes, polygonArea, resizeWall, splitExternalWall, syncWalls, wallOrientation } from '../js/geometry.js';
 
 function rectangularPlan() {
   const plan = createPlan();
@@ -85,4 +85,19 @@ test('moving one corner preserves all untouched corners', () => {
   const outline = [{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 8, y: 5 }, { x: 0, y: 5 }];
   assert.deepEqual(moveVertex(outline, 2, { x: 9, y: 6 }), [{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 9, y: 6 }, { x: 0, y: 5 }]);
   assert.deepEqual(outline[2], { x: 8, y: 5 });
+});
+
+test('splitting an external wall preserves its survey type and rebases later openings', () => {
+  const { storey } = rectangularPlan(); const source = storey.walls[0]; source.type = 'alternative_1'; source.openings.push({ ...makeOpening('window', 5), width_m: 1 });
+  const split = splitExternalWall(storey, source.id, { x: 3, y: 0 });
+  assert.ok(split); assert.equal(split.storey.outline.length, 5); assert.equal(split.storey.walls.length, 5);
+  assert.equal(split.storey.walls[0].type, 'alternative_1'); assert.equal(split.storey.walls[1].type, 'alternative_1');
+  assert.equal(split.storey.walls[1].openings[0].offset_m, 2);
+});
+
+test('named rooms are retained as survey data alongside the shell geometry', () => {
+  const { plan, storey } = rectangularPlan();
+  storey.rooms.push(createRoom({ name: 'Kitchen', polygon: [{ x: 0, y: 0 }, { x: 3, y: 0 }, { x: 3, y: 2 }, { x: 0, y: 2 }], light_count: 4 }));
+  const derived = derivePlan(plan).per_storey[0];
+  assert.equal(derived.room_count, 1); assert.equal(derived.heated_room_count, 1); assert.equal(derived.light_count, 4); assert.equal(derived.rooms[0].area_m2, 6);
 });

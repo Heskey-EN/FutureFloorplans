@@ -15,8 +15,26 @@ export const newId = prefix => `${prefix}_${Date.now().toString(36)}_${(idSeed +
 export function clone(value) { return JSON.parse(JSON.stringify(value)); }
 export function metres(value) { return `${Number(value || 0).toFixed(2)} m`; }
 export function squareMetres(value) { return `${Number(value || 0).toFixed(2)} m²`; }
+export const ROOM_USES = {
+  main: 'Main dwelling', extension: 'Extension', conservatory: 'Non-separated conservatory',
+  room_in_roof: 'Room in roof', excluded: 'Excluded space'
+};
+
+export const SURVEY_ITEM_TYPES = {
+  radiator: 'Radiator', storage_heater: 'Storage heater', panel_heater: 'Panel heater',
+  underfloor_heating: 'Underfloor heating zone', boiler: 'Boiler', heat_pump: 'Heat pump',
+  fireplace: 'Fireplace', ventilation: 'Ventilation unit'
+};
+
 export function distance(a, b) { return Math.hypot(b.x - a.x, b.y - a.y); }
 export function pointAlong(a, b, ratio) { return { x: a.x + (b.x - a.x) * ratio, y: a.y + (b.y - a.y) * ratio }; }
+export function segmentLength(segment) { return distance(segment.from, segment.to); }
+export function projectPointToSegment(point, from, to) {
+  const dx = to.x - from.x; const dy = to.y - from.y; const lengthSquared = dx * dx + dy * dy;
+  const rawRatio = lengthSquared ? ((point.x - from.x) * dx + (point.y - from.y) * dy) / lengthSquared : 0;
+  const ratio = Math.max(0, Math.min(1, rawRatio)); const projected = pointAlong(from, to, ratio);
+  return { point: projected, ratio, distance: distance(point, projected), length: Math.sqrt(lengthSquared) };
+}
 
 export function signedArea(points = []) {
   if (points.length < 3) return 0;
@@ -147,13 +165,40 @@ export function outlineFromBoxes(input = []) {
   });
 }
 
+export function createRoom({ name = 'Room', polygon = [], use = 'main', heated = true, habitable = true, ceiling_height_m = null, light_count = null, notes = '' } = {}) {
+  return { id: newId('room'), name, polygon: clone(polygon), use, heated, habitable, ceiling_height_m, light_count, notes };
+}
+
+export function makePartition(from, to, { thickness_m = .1, name = 'Internal wall' } = {}) {
+  return { id: newId('pt'), from: clone(from), to: clone(to), thickness_m, name, openings: [] };
+}
+
+export function makeSurveyItem(kind = 'radiator', point = { x: 0, y: 0 }) {
+  return { id: newId('item'), kind, point: clone(point), label: '', fuel: '', notes: '' };
+}
+
+export function ensureStoreySurveyData(storey) {
+  if (!Array.isArray(storey.rooms)) storey.rooms = [];
+  if (!Array.isArray(storey.partitions)) storey.partitions = [];
+  if (!Array.isArray(storey.survey_items)) storey.survey_items = [];
+  for (const room of storey.rooms) {
+    if (!Array.isArray(room.polygon)) room.polygon = [];
+    if (!room.use) room.use = 'main';
+    if (room.heated === undefined) room.heated = true;
+    if (room.habitable === undefined) room.habitable = true;
+  }
+  for (const partition of storey.partitions) if (!Array.isArray(partition.openings)) partition.openings = [];
+  return storey;
+}
+
 export function createStorey({ name = 'Ground floor', level = 0, height_m = 2.4, outline = [] } = {}) {
-  const storey = { id: newId('st'), name, level, height_m, outline: clone(outline), is_closed: false, boxes: [], walls: [], rooms: [] };
+  const storey = { id: newId('st'), name, level, height_m, outline: clone(outline), is_closed: false, boxes: [], walls: [], rooms: [], partitions: [], survey_items: [] };
   syncWalls(storey);
   return storey;
 }
 
 export function syncWalls(storey, { preserve = true } = {}) {
+  ensureStoreySurveyData(storey);
   if (!storey.is_closed) { storey.walls = []; return storey; }
   const previous = new Map(preserve ? (storey.walls || []).map(wall => [`${wall.from}:${wall.to}`, wall]) : []);
   const count = storey.outline?.length || 0;
@@ -200,6 +245,53 @@ export function closestWall(storey, point, tolerance = Infinity) {
     if (gap <= tolerance && (!closest || gap < closest.distance)) closest = { wall, point: projected, distance: gap, ratio: t, offset_m: Math.sqrt(lengthSquared) * t };
   }
   return closest;
+}
+
+export function closestPartition(storey, point, tolerance = Infinity) {
+  let closest = null;
+  for (const partition of storey.partitions || []) {
+    const match = projectPointToSegment(point, partition.from, partition.to);
+    if (match.distance <= tolerance && (!closest || match.distance < closest.distance)) closest = { partition, ...match, offset_m: match.length * match.ratio };
+  }
+  return closest;
+}
+
+export function roomArea(room) { return polygonArea(room?.polygon || []); }
+export function roomCentroid(room) {
+  const points = room?.polygon || []; if (!points.length) return { x: 0, y: 0 };
+  return points.reduce((sum, point) => ({ x: sum.x + point.x / points.length, y: sum.y + point.y / points.length }), { x: 0, y: 0 });
+}
+
+/**
+ * Inserts an editable corner into an external wall and carries its survey
+ * classification/openings across the two new wall segments. Openings that
+ * begin after the split are rebased to the new segment.
+ */
+export function splitExternalWall(storey, wallId, point, epsilon = .05) {
+  const wallIndex = (storey.walls || []).findIndex(wall => wall.id === wallId);
+  if (wallIndex < 0) return null;
+  const wall = storey.walls[wallIndex]; const from = storey.outline[wall.from]; const to = storey.outline[wall.to];
+  if (!from || !to) return null;
+  const match = projectPointToSegment(point, from, to);
+  if (match.ratio <= epsilon / Math.max(match.length, epsilon) || match.ratio >= 1 - epsilon / Math.max(match.length, epsilon)) return null;
+  const next = clone(storey); const insertedAt = wallIndex + 1; next.outline.splice(insertedAt, 0, match.point);
+  const splitOffset = match.length * match.ratio;
+  const firstOpenings = []; const secondOpenings = [];
+  for (const opening of wall.openings || []) {
+    const offset = Number(opening.offset_m) || 0;
+    if (offset >= splitOffset) secondOpenings.push({ ...opening, offset_m: offset - splitOffset });
+    else firstOpenings.push({ ...opening, width_m: Math.min(Number(opening.width_m) || 0, Math.max(0, splitOffset - offset)) });
+  }
+  const first = { ...clone(wall), from: wallIndex, to: insertedAt, openings: firstOpenings };
+  const second = { ...clone(wall), id: newId('w'), from: insertedAt, to: (insertedAt + 1) % next.outline.length, openings: secondOpenings };
+  next.walls = next.outline.map((_, index) => {
+    if (index < wallIndex) return { ...clone(storey.walls[index]), from: index, to: index + 1 };
+    if (index === wallIndex) return first;
+    if (index === insertedAt) return second;
+    const old = storey.walls[index - 1]; return { ...clone(old), from: index, to: (index + 1) % next.outline.length };
+  });
+  ensureStoreySurveyData(next);
+  return { storey: next, vertexIndex: insertedAt, wallId: first.id, newWallId: second.id };
 }
 
 export function makeOpening(kind = 'window', offset_m = 0) {
@@ -251,7 +343,11 @@ export function derivePlan(plan) {
     const heatLossOpenings = walls.filter(wall => wall.effective_length_m > 0).flatMap(wall => wall.openings);
     const opening_area_total_m2 = heatLossOpenings.reduce((sum, opening) => sum + opening.area_m2, 0);
     const external_door_count = heatLossOpenings.filter(opening => opening.kind === 'door').length + heatLossOpenings.filter(opening => opening.kind === 'glazed_door').length * 2;
-    return { id: storey.id, level: storey.level, name: storey.name, floor_area_m2, heat_loss_perimeter_m, party_wall_length_m, sheltered_wall_length_m, gross_wall_area_m2, opening_area_total_m2, net_wall_area_m2: Math.max(0, gross_wall_area_m2 - opening_area_total_m2), external_door_count, walls };
+    const rooms = (storey.rooms || []).map(room => ({ ...room, area_m2: roomArea(room) }));
+    const partition_opening_count = (storey.partitions || []).reduce((count, partition) => count + (partition.openings || []).length, 0);
+    const heated_room_count = rooms.filter(room => room.heated).length;
+    const light_count = rooms.reduce((count, room) => count + (Number(room.light_count) || 0), 0);
+    return { id: storey.id, level: storey.level, name: storey.name, floor_area_m2, heat_loss_perimeter_m, party_wall_length_m, sheltered_wall_length_m, gross_wall_area_m2, opening_area_total_m2, net_wall_area_m2: Math.max(0, gross_wall_area_m2 - opening_area_total_m2), external_door_count, walls, rooms, room_count: rooms.length, heated_room_count, light_count, partition_opening_count, survey_items: clone(storey.survey_items || []) };
   });
   const totals = per_storey.reduce((sum, storey) => ({ floor_area_m2: sum.floor_area_m2 + storey.floor_area_m2, heat_loss_perimeter_m: sum.heat_loss_perimeter_m + storey.heat_loss_perimeter_m, gross_wall_area_m2: sum.gross_wall_area_m2 + storey.gross_wall_area_m2, opening_area_total_m2: sum.opening_area_total_m2 + storey.opening_area_total_m2, net_wall_area_m2: sum.net_wall_area_m2 + storey.net_wall_area_m2, external_door_count: sum.external_door_count + storey.external_door_count }), { floor_area_m2: 0, heat_loss_perimeter_m: 0, gross_wall_area_m2: 0, opening_area_total_m2: 0, net_wall_area_m2: 0, external_door_count: 0 });
   return { per_storey, totals, warnings: validatePlan(plan, per_storey) };
@@ -273,6 +369,11 @@ export function validatePlan(plan, perStorey = deriveWithoutValidation(plan)) {
       for (const opening of wall.openings || []) {
         if (opening.kind === 'door' && Number(opening.glazed_area_ratio) >= .6) warnings.push(`${storey.name}: a door is at least 60% glazed — consider classifying it as a window.`);
       }
+    }
+    for (const room of storey.rooms || []) {
+      if (!room.name?.trim()) warnings.push(`${storey.name}: name each recorded room before exporting.`);
+      if ((room.polygon || []).length < 3 || roomArea(room) <= 0) warnings.push(`${storey.name}: a room zone has no usable measured area.`);
+      if (room.ceiling_height_m && (room.ceiling_height_m < 1.5 || room.ceiling_height_m > 4.5)) warnings.push(`${room.name || 'Room'}: verify the recorded ceiling height.`);
     }
   }
   if (Number(plan.north_offset_deg) === 0) warnings.push('North is at the default position — confirm orientations on site.');
