@@ -15,7 +15,8 @@ No install step is needed: the project has no runtime dependencies.
 
 ## Working MVP
 
-- Box-first drafting: drag a rough footprint box, type its exact measured width/depth, then merge adjoining extension boxes into L-, T- and stepped footprints. Freehand wall tracing remains available for unusual shapes.
+- Room-first drafting: drag a rough room, then enter its exact width and depth in the large on-plan measurement chips. Add adjoining rooms to build L-, T- and stepped footprints; Quick walls remains available for unusual shapes.
+- Direct plan editing: select and drag a corner or a straight wall to correct a shape, or tap a wall measurement chip to type an exact length. Measurement chips use generous touch targets for on-site iPad work.
 - Pointer Events canvas with touch-safe drawing, two-finger pan / pinch zoom, snap grid, orthogonal lock, typed dimensions and undo/redo.
 - Single or duplicated storeys, internal floor polygons, wall types and partial-height heat-loss walls.
 - Live gross internal area, heat-loss perimeter, party-wall exclusion, gross/net wall area, opening area and eight-point compass orientation.

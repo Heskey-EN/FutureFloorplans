@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { boxesTouchOrOverlap, createPlan, createStorey, derivePlan, makeOpening, outlineFromBoxes, polygonArea, syncWalls, wallOrientation } from '../js/geometry.js';
+import { boxesTouchOrOverlap, createPlan, createStorey, derivePlan, makeOpening, moveAxisAlignedWall, moveVertex, outlineFromBoxes, polygonArea, resizeWall, syncWalls, wallOrientation } from '../js/geometry.js';
 
 function rectangularPlan() {
   const plan = createPlan();
@@ -67,4 +67,22 @@ test('box extensions must meet the footprint along a real edge, not only at a co
   const footprint = [{ x: 0, y: 0, width: 8, depth: 5 }];
   assert.equal(boxesTouchOrOverlap(footprint, { x: 3, y: 5, width: 2, depth: 2 }), true);
   assert.equal(boxesTouchOrOverlap(footprint, { x: 8, y: 5, width: 2, depth: 2 }), false);
+});
+
+test('moving a straight wall moves both of its corners along the wall normal', () => {
+  const outline = [{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 8, y: 5 }, { x: 0, y: 5 }];
+  assert.deepEqual(moveAxisAlignedWall(outline, 0, -1), [{ x: 0, y: -1 }, { x: 8, y: -1 }, { x: 8, y: 5 }, { x: 0, y: 5 }]);
+  assert.deepEqual(moveAxisAlignedWall(outline, 1, 9), [{ x: 0, y: 0 }, { x: 9, y: 0 }, { x: 9, y: 5 }, { x: 0, y: 5 }]);
+});
+
+test('direct wall measurements can anchor either corner', () => {
+  const outline = [{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 8, y: 5 }, { x: 0, y: 5 }];
+  assert.deepEqual(resizeWall(outline, 0, 6), [{ x: 0, y: 0 }, { x: 6, y: 0 }, { x: 8, y: 5 }, { x: 0, y: 5 }]);
+  assert.deepEqual(resizeWall(outline, 0, 6, 'to'), [{ x: 2, y: 0 }, { x: 8, y: 0 }, { x: 8, y: 5 }, { x: 0, y: 5 }]);
+});
+
+test('moving one corner preserves all untouched corners', () => {
+  const outline = [{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 8, y: 5 }, { x: 0, y: 5 }];
+  assert.deepEqual(moveVertex(outline, 2, { x: 9, y: 6 }), [{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 9, y: 6 }, { x: 0, y: 5 }]);
+  assert.deepEqual(outline[2], { x: 8, y: 5 });
 });

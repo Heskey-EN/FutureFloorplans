@@ -47,6 +47,51 @@ export function isSelfIntersecting(points = []) {
   return false;
 }
 
+/**
+ * Returns a safe copy with one corner moved. The caller can decide how to
+ * constrain the point for the interaction it is implementing.
+ */
+export function moveVertex(points = [], index, point) {
+  if (index < 0 || index >= points.length) return clone(points);
+  const next = clone(points);
+  next[index] = { x: Number(point.x), y: Number(point.y) };
+  return next;
+}
+
+/**
+ * Moves an orthogonal wall along its normal. Both of its end points move,
+ * keeping its length and the surrounding wall order intact. Angled walls are
+ * intentionally returned unchanged: they should be adjusted by their corners.
+ */
+export function moveAxisAlignedWall(points = [], wallIndex, coordinate, epsilon = 1e-8) {
+  if (points.length < 3) return null;
+  const from = points[wallIndex]; const to = points[(wallIndex + 1) % points.length];
+  if (!from || !to) return null;
+  const next = clone(points); const value = Number(coordinate);
+  if (Math.abs(from.y - to.y) < epsilon) {
+    next[wallIndex].y = value; next[(wallIndex + 1) % points.length].y = value;
+  } else if (Math.abs(from.x - to.x) < epsilon) {
+    next[wallIndex].x = value; next[(wallIndex + 1) % points.length].x = value;
+  } else return null;
+  return next;
+}
+
+/**
+ * Sets a wall's measured length, anchoring either its first or second corner.
+ * This supports direct measurement entry while retaining the wall direction.
+ */
+export function resizeWall(points = [], wallIndex, length, anchor = 'from') {
+  if (points.length < 3 || !(Number(length) > 0)) return null;
+  const from = points[wallIndex]; const to = points[(wallIndex + 1) % points.length];
+  if (!from || !to) return null;
+  const current = distance(from, to); if (!current) return null;
+  const dx = (to.x - from.x) / current; const dy = (to.y - from.y) / current;
+  const next = clone(points);
+  if (anchor === 'to') next[wallIndex] = { x: to.x - dx * Number(length), y: to.y - dy * Number(length) };
+  else next[(wallIndex + 1) % points.length] = { x: from.x + dx * Number(length), y: from.y + dy * Number(length) };
+  return next;
+}
+
 export function normaliseBox(box) {
   const x2 = Number(box.x) + Number(box.width); const y2 = Number(box.y) + Number(box.depth);
   return { x: Math.min(Number(box.x), x2), y: Math.min(Number(box.y), y2), width: Math.abs(Number(box.width)), depth: Math.abs(Number(box.depth)) };
