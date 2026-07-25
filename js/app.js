@@ -17,8 +17,21 @@ const elements = {
   inspectorHeading: $('#inspectorHeading'), selectionBadge: $('#selectionBadge'), inspector: $('#inspectorContent'),
   warningCount: $('#warningCount'), warnings: $('#warningsList'), dialog: $('#confirmDialog'), dialogTitle: $('#dialogTitle'),
   dialogMessage: $('#dialogMessage'), dialogConfirm: $('#dialogConfirm'), dimensionPopover: $('#dimensionPopover'), finishOutline: $('#finishOutlineButton'),
-  symbolPicker: $('#symbolPicker'), customSymbolRow: $('#customSymbolRow'), customSymbolLabel: $('#customSymbolLabel'), customSymbolGroup: $('#customSymbolGroup'), placementNote: $('#placementNote')
+  symbolPicker: $('#symbolPicker'), customSymbolRow: $('#customSymbolRow'), customSymbolLabel: $('#customSymbolLabel'), customSymbolGroup: $('#customSymbolGroup'), placementNote: $('#placementNote'),
+  railGroups: $('#railGroups'), railItems: $('#railItems'), contextBar: $('#contextBar')
 };
+
+// Icon glyph per symbol kind / opening style (SVG sprite in index.html).
+const ICONS = {
+  electric_meter: 'i-meter', consumer_unit: 'i-unit', gas_meter: 'i-meter', stop_tap: 'i-tap',
+  combi_gas_boiler: 'i-boiler', reg_gas_boiler: 'i-boiler', electric_boiler: 'i-boiler', oil_boiler: 'i-boiler', back_boiler: 'i-boiler', water_cylinder: 'i-cylinder',
+  radiator: 'i-radiator', radiator_trv: 'i-trv', electric_heater: 'i-heater', electric_storage: 'i-heater', gas_fire: 'i-flame',
+  programmer: 'i-programmer', thermostat: 'i-thermostat', programmable_thermostat: 'i-thermostat',
+  light_high_energy: 'i-light', light_low_energy: 'i-light', custom: 'i-custom',
+  window: 'i-window', bay_window: 'i-window-bay', sliding_window: 'i-door-slide', fixed_window: 'i-window-fixed', roof_window: 'i-roof-window',
+  door: 'i-door', double_door: 'i-door-double', french_door: 'i-door-double', patio_door: 'i-door-slide', bifold_door: 'i-door-bifold', garage_door: 'i-garage'
+};
+const iconFor = key => ICONS[key] || 'i-custom';
 
 const state = {
   plan: createPlan(), activeStoreyId: null, tool: 'box', selection: null, undo: [], redo: [],
@@ -26,7 +39,7 @@ const state = {
   drawPreview: null, boxPreview: null, pendingBox: null, pendingRoom: null, roomPreview: null, partitionPreview: null, partitionStart: null,
   boxError: '', roomError: '', derived: null, saveTimer: null, pendingConfirm: null,
   dimensionHits: [], measurementEditor: null, closureSuggestion: null, interactionNotice: '', snapGuide: null,
-  placement: null
+  placement: null, railGroup: 'openings', alignGuides: [], hover: null, flashTimer: null
 };
 
 function activeStorey() { return state.plan.geometry.storeys.find(storey => storey.id === state.activeStoreyId) || state.plan.geometry.storeys[0]; }
@@ -104,6 +117,38 @@ function snapWorldPoint(raw, { surface = false, exclude = [] } = {}) {
   state.snapGuide = snappedX !== gridPoint.x || snappedY !== gridPoint.y ? { point: { x: snappedX, y: snappedY }, kind: 'axis', x: snappedX !== gridPoint.x, y: snappedY !== gridPoint.y } : null;
   return { x: snappedX, y: snappedY };
 }
+// Full-height/width guides while a room is being dragged into alignment.
+function drawAlignGuides() {
+  if (!state.alignGuides?.length) return;
+  ctx.save(); ctx.strokeStyle = '#ec5a35'; ctx.lineWidth = 1.5; setLineDash([7, 5]);
+  for (const guide of state.alignGuides) {
+    ctx.beginPath();
+    if (guide.x != null) { const x = Math.round(screenPoint({ x: guide.x, y: 0 }).x) + .5; ctx.moveTo(x, 0); ctx.lineTo(x, frame.clientHeight); }
+    if (guide.y != null) { const y = Math.round(screenPoint({ x: 0, y: guide.y }).y) + .5; ctx.moveTo(0, y); ctx.lineTo(frame.clientWidth, y); }
+    ctx.stroke();
+  }
+  setLineDash([]); ctx.restore();
+}
+
+// Soft highlight of whatever the pointer is over, so targets feel alive.
+function drawHover() {
+  const hover = state.hover; if (!hover || state.drag) return;
+  ctx.save();
+  if (hover.type === 'room') {
+    const room = activeStorey().rooms?.find(item => item.id === hover.id);
+    if (room && !(state.selection?.type === 'room' && state.selection.id === room.id)) {
+      const points = room.polygon.map(screenPoint);
+      ctx.beginPath(); points.forEach((point, index) => index ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y)); ctx.closePath();
+      ctx.fillStyle = 'rgba(236,90,53,.07)'; ctx.fill();
+    }
+  } else if (hover.type === 'wall' && hover.from && hover.to) {
+    const a = screenPoint(hover.from); const b = screenPoint(hover.to);
+    ctx.strokeStyle = 'rgba(236,90,53,.55)'; ctx.lineWidth = 9; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawSnapGuide() {
   const guide = state.snapGuide; if (!guide) return;
   const point = screenPoint(guide.point); ctx.save(); ctx.strokeStyle = guide.kind === 'surface' ? '#5b9ab4' : '#469d75'; ctx.lineWidth = 1.5; setLineDash([4, 4]);
@@ -305,7 +350,7 @@ function drawClosureSuggestion() {
 
 function renderCanvas() {
   const rect = frame.getBoundingClientRect(); if (!rect.width || !rect.height) return;
-  state.dimensionHits = []; ctx.clearRect(0, 0, rect.width, rect.height); drawGrid(rect.width, rect.height); drawPlan(); drawPreview(); drawBoxPreview(); drawRoomPreview(); drawPartitionPreview(); drawClosureSuggestion(); drawSnapGuide();
+  state.dimensionHits = []; ctx.clearRect(0, 0, rect.width, rect.height); drawGrid(rect.width, rect.height); drawHover(); drawPlan(); drawPreview(); drawBoxPreview(); drawRoomPreview(); drawPartitionPreview(); drawClosureSuggestion(); drawAlignGuides(); drawSnapGuide();
   const scaleLength = state.view.scale >= 110 ? 1 : state.view.scale >= 55 ? 2 : 5; const scalePx = Math.min(90, Math.max(32, state.view.scale * scaleLength));
   elements.scaleBar.style.width = `${scalePx}px`; elements.scaleLabel.textContent = `${scaleLength} m`; elements.zoomReadout.textContent = `${Math.round(state.view.scale / 65 * 100)}%`;
   elements.northIndicator.querySelector('span').style.transform = `rotate(${Number(state.plan.north_offset_deg || 0)}deg)`;
@@ -399,6 +444,39 @@ function renderInspector() {
   }
 }
 
+// Floating action bar pinned above the current selection.
+function renderContextBar() {
+  const bar = elements.contextBar; if (!bar) return;
+  const selection = state.selection; const storey = activeStorey();
+  if (!selection || state.pendingRoom || state.pendingBox) { bar.classList.add('hidden'); return; }
+  let anchor = null; let buttons = '';
+  if (selection.type === 'room') {
+    const room = storey.rooms?.find(item => item.id === selection.id); if (!room) { bar.classList.add('hidden'); return; }
+    const box = boundsOf(room.polygon); anchor = screenPoint({ x: box.x + box.width / 2, y: box.y });
+    buttons = `<button data-action="edit-room-size" title="Set exact size">${box.width.toFixed(2)} × ${box.depth.toFixed(2)} m</button><span class="ctx-sep"></span><button data-action="duplicate-room" title="Duplicate room">Duplicate</button><button class="ctx-danger" data-action="delete-room" title="Delete room">Delete</button>`;
+  } else if (selection.type === 'wall') {
+    const wall = getWall(storey, selection.id); if (!wall) { bar.classList.add('hidden'); return; }
+    const from = storey.outline[wall.from]; const to = storey.outline[wall.to];
+    anchor = screenPoint({ x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 });
+    buttons = `<button data-action="cycle-wall-type" title="Change wall type">${escapeHTML(WALL_TYPES[wall.type] || 'Wall')}</button><span class="ctx-sep"></span><button data-action="split-wall" title="Add a corner">Split</button>`;
+  } else if (selection.type === 'item') {
+    const item = storey.survey_items?.find(entry => entry.id === selection.id); if (!item) { bar.classList.add('hidden'); return; }
+    anchor = screenPoint(item.point);
+    buttons = `<button data-action="duplicate-item">Duplicate</button><button class="ctx-danger" data-action="delete-item">Delete</button>`;
+  } else if (selection.type === 'opening') {
+    const found = findOpening(selection.id); if (!found) { bar.classList.add('hidden'); return; }
+    const host = found.host; const from = found.surface === 'external' ? storey.outline[host.from] : host.from; const to = found.surface === 'external' ? storey.outline[host.to] : host.to;
+    const length = distance(from, to) || 1; const mid = pointAlong(from, to, Math.min(1, (found.opening.offset_m + found.opening.width_m / 2) / length));
+    anchor = screenPoint(mid);
+    buttons = `<button class="ctx-danger" data-action="delete-opening">Delete</button>`;
+  }
+  if (!anchor) { bar.classList.add('hidden'); return; }
+  bar.innerHTML = buttons; bar.classList.remove('hidden');
+  const width = bar.offsetWidth || 200; const height = bar.offsetHeight || 38;
+  bar.style.left = `${Math.max(8, Math.min(frame.clientWidth - width - 8, anchor.x - width / 2))}px`;
+  bar.style.top = `${Math.max(8, Math.min(frame.clientHeight - height - 8, anchor.y - height - 14))}px`;
+}
+
 function renderWarnings() {
   const warnings = state.derived?.warnings || []; elements.warningCount.textContent = warnings.length; elements.warningCount.classList.toggle('clear', !warnings.length);
   elements.warnings.innerHTML = warnings.length ? warnings.map(warning => `<li>${escapeHTML(warning)}</li>`).join('') : '<li class="good">No geometry checks need attention.</li>';
@@ -410,8 +488,13 @@ function renderMetrics() {
 }
 
 function surveyInstructions() {
-  if (state.tool === 'place') return state.placement?.mode === 'opening' ? `Tap a wall to add a ${placementLabel()}` : `Tap inside the plan to place a ${placementLabel()}`;
-  if (state.tool === 'room') return activeStorey().rooms?.length ? 'Tap an external wall to grow the next room from it — then type its width and depth' : 'Drag to size the first room, then type its exact width and depth';
+  if (state.interactionNotice) return state.interactionNotice;
+  if (state.tool === 'place') return state.placement?.mode === 'opening' ? `Tap a wall to add a ${placementLabel()} · Esc to stop` : `Tap the plan to place a ${placementLabel()} · Esc to stop`;
+  if (state.tool === 'room') return activeStorey().rooms?.length ? 'Tap an external wall — the next room grows from it' : 'Tap or drag to place your first room';
+  if (state.tool === 'select') {
+    if (state.selection?.type === 'room') return 'Drag to move · drag a wall to resize · Enter to type exact size · Delete to remove';
+    return 'Tap a room or wall · drag a room to move it · drag a wall to resize';
+  }
   if (state.tool === 'partition') return state.partitionStart ? 'Tap the end of the internal wall · corners, walls and axes snap automatically' : 'Tap or drag to start an internal wall · then tap its end';
   if (state.tool === 'split') return 'Tap an external wall to insert an editable corner exactly on it';
   if (state.tool === 'door') return 'Tap any external or internal wall to add a door';
@@ -429,8 +512,8 @@ function render() {
   elements.address.value = state.plan.property_address || ''; elements.postcode.value = state.plan.postcode || ''; elements.north.value = String(Math.round(state.plan.north_offset_deg || 0)); elements.northReadout.textContent = `${Math.round(state.plan.north_offset_deg || 0)}°`;
   elements.storeyKicker.textContent = storey.name; elements.canvasHint.classList.toggle('hidden', storey.outline.length > 0 || Boolean(state.pendingBox) || Boolean(state.pendingRoom));
   elements.instruction.textContent = surveyInstructions(); document.querySelectorAll('.tool-button').forEach(button => button.classList.toggle('active', button.dataset.tool === state.tool));
-  if (elements.placementNote) elements.placementNote.textContent = state.placement ? `Placing ${placementLabel()} — tap the plan. Choose a tool to stop.` : '';
-  renderStoreyTabs(); renderMetrics(); renderInspector(); renderWarnings(); renderCanvas();
+  if (elements.placementNote) elements.placementNote.textContent = state.placement ? `Placing ${placementLabel()} — tap the plan. Esc to stop.` : '';
+  renderStoreyTabs(); renderRail(); renderMetrics(); renderInspector(); renderWarnings(); renderCanvas(); renderContextBar();
 }
 
 function instructions() {
@@ -473,6 +556,15 @@ function hideDimensionEditor({ redraw = true } = {}) {
 }
 
 function openDimensionEditor(hit) {
+  if (hit.kind === 'room-size') {
+    const room = activeStorey().rooms?.find(item => item.id === hit.roomId); if (!room) return;
+    const box = boundsOf(room.polygon);
+    state.measurementEditor = { kind: 'room-size', roomId: room.id };
+    elements.dimensionPopover.innerHTML = `<span class="popover-kicker">${escapeHTML(room.name || 'Room')} size</span><div class="popover-fields"><label>Width (m)<input id="sizeWidthInput" type="number" inputmode="decimal" min="0.1" step="0.01" value="${box.width.toFixed(2)}" /></label><label>Depth (m)<input id="sizeDepthInput" type="number" inputmode="decimal" min="0.1" step="0.01" value="${box.depth.toFixed(2)}" /></label></div><span class="popover-note">Type your laser measurements. Tab moves between fields · Enter applies.</span><div class="popover-actions"><button class="secondary-button" type="button" data-measurement-action="cancel">Cancel</button><button class="primary-button" type="submit">Set size</button></div>`;
+    elements.dimensionPopover.classList.remove('hidden'); placeDimensionPopover(hit.centre); renderCanvas();
+    requestAnimationFrame(() => { const input = $('#sizeWidthInput'); input?.focus({ preventScroll: true }); input?.select(); });
+    return;
+  }
   if (hit.kind === 'box') {
     const box = state.pendingBox; if (!box) return;
     state.measurementEditor = { kind: 'box', field: hit.field };
@@ -515,6 +607,18 @@ function outlineIsSafe(outline) {
 function applyDimensionEditor() {
   const editor = state.measurementEditor;
   if (!editor) return;
+  if (editor.kind === 'room-size') {
+    const storey = activeStorey(); const room = storey.rooms?.find(item => item.id === editor.roomId);
+    const width = Number($('#sizeWidthInput')?.value); const depth = Number($('#sizeDepthInput')?.value);
+    if (!room || !(width >= .1) || !(depth >= .1)) return;
+    const box = boundsOf(room.polygon);
+    const trial = clone(room); resizeRoomEdge(trial, 'right', box.x + width); resizeRoomEdge(trial, 'bottom', box.y + depth);
+    const others = storey.rooms.filter(item => item.id !== room.id).map(item => boundsOf(item.polygon));
+    if (others.length && !boxesConnected([...others, boundsOf(trial.polygon)])) { const note = elements.dimensionPopover.querySelector('.popover-note'); if (note) note.textContent = 'That size would disconnect the room from the plan.'; return; }
+    hideDimensionEditor({ redraw: false });
+    transaction('set room size', () => { resizeRoomEdge(room, 'right', box.x + width); resizeRoomEdge(room, 'bottom', box.y + depth); rebuildStoreyFromRooms(storey); clampOpenings(storey); });
+    return;
+  }
   if (editor.kind === 'box') {
     const width = Number($('#boxWidthInput')?.value); const depth = Number($('#boxDepthInput')?.value);
     if (!(width >= .1 && depth >= .1)) return;
@@ -567,7 +671,12 @@ function pointerDown(event) {
   const wallHit = closestWall(storey, world, Math.max(.18, 16 / state.view.scale));
   if (wallHit && isAxisAlignedWall(storey, wallHit.wall)) {
     const room = roomOwningWall(storey, wallHit.wall); const side = wallSideOfRoom(room, wallHit.wall, storey);
-    if (room && side) state.drag = { ...state.drag, mode: 'wall', roomId: room.id, side, before: snapshot(), changed: false };
+    if (room && side) { state.drag = { ...state.drag, mode: 'wall', roomId: room.id, side, before: snapshot(), changed: false }; return; }
+  }
+  // dragging inside a room moves the whole room (with alignment guides)
+  const insideRoom = roomAt(storey, world);
+  if (insideRoom) {
+    state.drag = { ...state.drag, mode: 'room-move', roomId: insideRoom.id, grabWorld: world, origin: boundsOf(insideRoom.polygon), before: snapshot(), changed: false };
   }
   const partitionHit = closestPartition(storey, world, Math.max(.18, 16 / state.view.scale));
   if (partitionHit) {
@@ -602,9 +711,40 @@ function snapToOutlineAxes(point, outline, { exclude = [] } = {}) {
   return { x: Math.abs(x - next.x) <= threshold ? x : next.x, y: Math.abs(y - next.y) <= threshold ? y : next.y };
 }
 
+// Snap a moving room's edges to other rooms' edges; returns the offset plus the
+// guide lines to draw. Magnetic within ~14 screen px, otherwise falls to grid.
+function snapRoomMove(storey, roomId, box) {
+  const tol = Math.max(.1, 14 / state.view.scale);
+  const targetsX = []; const targetsY = [];
+  for (const other of storey.rooms || []) {
+    if (other.id === roomId) continue;
+    const b = boundsOf(other.polygon);
+    targetsX.push(b.x, b.x + b.width); targetsY.push(b.y, b.y + b.depth);
+  }
+  const edgesX = [box.x, box.x + box.width]; const edgesY = [box.y, box.y + box.depth];
+  let dx = 0, dy = 0, bestX = tol, bestY = tol; const guides = [];
+  for (const edge of edgesX) for (const target of targetsX) { const gap = Math.abs(target - edge); if (gap < bestX) { bestX = gap; dx = target - edge; } }
+  for (const edge of edgesY) for (const target of targetsY) { const gap = Math.abs(target - edge); if (gap < bestY) { bestY = gap; dy = target - edge; } }
+  const snapped = { x: box.x + dx, y: box.y + dy, width: box.width, depth: box.depth };
+  if (dx !== 0) guides.push({ x: Math.abs(targetsX.reduce((best, t) => Math.abs(t - snapped.x) < Math.abs(best - snapped.x) ? t : best, snapped.x) - snapped.x) < 1e-6 ? snapped.x : snapped.x + snapped.width });
+  if (dy !== 0) guides.push({ y: Math.abs(targetsY.reduce((best, t) => Math.abs(t - snapped.y) < Math.abs(best - snapped.y) ? t : best, snapped.y) - snapped.y) < 1e-6 ? snapped.y : snapped.y + snapped.depth });
+  return { box: snapped, guides };
+}
+
 function updateGeometryDrag(point) {
-  const drag = state.drag; if (!drag || (drag.mode !== 'wall' && drag.mode !== 'partition-end')) return false;
+  const drag = state.drag; if (!drag || (drag.mode !== 'wall' && drag.mode !== 'partition-end' && drag.mode !== 'room-move')) return false;
   const storey = activeStorey(); const raw = worldPoint(point);
+  if (drag.mode === 'room-move') {
+    const room = storey.rooms?.find(item => item.id === drag.roomId); if (!room) return false;
+    const rawBox = { x: drag.origin.x + (raw.x - drag.grabWorld.x), y: drag.origin.y + (raw.y - drag.grabWorld.y), width: drag.origin.width, depth: drag.origin.depth };
+    const gridBox = { ...rawBox, x: Math.round(rawBox.x / .05) * .05, y: Math.round(rawBox.y / .05) * .05 };
+    const { box, guides } = snapRoomMove(storey, room.id, gridBox);
+    const others = storey.rooms.filter(item => item.id !== room.id).map(item => boundsOf(item.polygon));
+    if (others.length && !boxesConnected([...others, box])) { state.alignGuides = []; return false; }
+    room.polygon = rectPolygon(box);
+    if (!rebuildStoreyFromRooms(storey)) return false;
+    state.alignGuides = guides; clampOpenings(storey); drag.changed = true; return true;
+  }
   if (drag.mode === 'partition-end') {
     const partition = storey.partitions?.find(item => item.id === drag.partitionId); if (!partition) return false;
     partition[drag.endpoint] = snapWorldPoint(raw, { exclude: [partition[drag.endpoint === 'from' ? 'to' : 'from']] }); clampOpenings(storey); drag.changed = true; return true;
@@ -635,12 +775,33 @@ function boxFromDrag(start, end) {
   return normaliseBox({ x: left, y: top, width: right - left, depth: bottom - top });
 }
 
+// Hover feedback: highlight the wall or room under the pointer and set a cursor
+// that says what a press will do.
+function updateHover(point) {
+  const storey = activeStorey(); const world = worldPoint(point); let next = null; let cursor = 'default';
+  if (state.tool === 'place') cursor = 'copy';
+  else if (state.tool === 'room') { const match = storey.rooms?.length ? closestWall(storey, world, Math.max(.35, 30 / state.view.scale)) : null; if (match) { next = { type: 'wall', id: match.wall.id, from: storey.outline[match.wall.from], to: storey.outline[match.wall.to] }; cursor = 'copy'; } else cursor = storey.rooms?.length ? 'not-allowed' : 'copy'; }
+  else if (state.tool === 'select') {
+    const wallHit = closestWall(storey, world, Math.max(.18, 16 / state.view.scale));
+    if (wallHit && isAxisAlignedWall(storey, wallHit.wall)) {
+      const from = storey.outline[wallHit.wall.from]; const to = storey.outline[wallHit.wall.to];
+      next = { type: 'wall', id: wallHit.wall.id, from, to };
+      cursor = Math.abs(from.y - to.y) < 1e-8 ? 'ns-resize' : 'ew-resize';
+    } else { const room = roomAt(storey, world); if (room) { next = { type: 'room', id: room.id }; cursor = 'move'; } }
+  }
+  const changed = JSON.stringify(next?.id ?? null) !== JSON.stringify(state.hover?.id ?? null) || next?.type !== state.hover?.type;
+  state.hover = next; canvas.style.cursor = cursor;
+  if (changed) renderCanvas();
+}
+
 function pointerMove(event) {
-  const point = clientPoint(event); if (!state.pointers.has(event.pointerId)) return; state.pointers.set(event.pointerId, point);
+  const point = clientPoint(event);
+  if (!state.pointers.has(event.pointerId)) { if (event.pointerType !== 'touch') updateHover(point); return; }
+  state.pointers.set(event.pointerId, point);
   if (state.pointers.size >= 2 && state.gesture) { const [a, b] = [...state.pointers.values()]; const nextDistance = distance(a, b); const nextMid = midpoint(a, b); const scale = Math.min(220, Math.max(20, state.gesture.startScale * nextDistance / Math.max(1, state.gesture.startDistance))); const focusWorld = worldFromView(state.gesture.startMid, state.gesture.startView, state.gesture.startScale); state.view.scale = scale; state.view.x = nextMid.x - focusWorld.x * scale; state.view.y = nextMid.y - focusWorld.y * scale; renderCanvas(); return; }
   if (!state.drag || state.drag.id !== event.pointerId) return; const dx = point.x - state.drag.start.x; const dy = point.y - state.drag.start.y;
   if (Math.hypot(dx, dy) > 4) state.drag.moved = true;
-  if (state.drag.mode === 'vertex' || state.drag.mode === 'wall' || state.drag.mode === 'partition-end') updateGeometryDrag(point);
+  if (state.drag.mode === 'wall' || state.drag.mode === 'partition-end' || state.drag.mode === 'room-move') updateGeometryDrag(point);
   else if (state.tool === 'draw') state.drawPreview = constrainedPoint(point, event);
   else if (state.drag.mode === 'partition-draw') state.partitionPreview = snapWorldPoint(worldPoint(point), { exclude: [state.partitionStart] });
   else if (state.tool === 'room') state.roomPreview = boxFromDrag(state.drag.start, point);
@@ -664,11 +825,11 @@ function pointerUp(event) {
     } else if ((state.tool === 'box' || state.tool === 'extend') && drag.moved && state.boxPreview?.width > 0 && state.boxPreview?.depth > 0) {
       state.pendingBox = { ...state.boxPreview, mode: state.tool }; state.boxError = ''; state.selection = null; render();
       const widthHit = state.dimensionHits.find(hit => hit.kind === 'box' && hit.field === 'width'); if (widthHit) openDimensionEditor(widthHit);
-    } else if (drag.mode === 'vertex' || drag.mode === 'wall' || drag.mode === 'partition-end') {
+    } else if (drag.mode === 'wall' || drag.mode === 'partition-end' || drag.mode === 'room-move') {
       if (drag.changed) commitGeometryDrag(drag); else handleTap(point, event);
     } else if (!drag.moved || state.tool === 'draw') handleTap(point, event);
   }
-  state.drag = null; state.drawPreview = null; state.boxPreview = null; state.roomPreview = null; if (state.tool !== 'partition') state.partitionPreview = null; renderCanvas();
+  state.drag = null; state.drawPreview = null; state.boxPreview = null; state.roomPreview = null; state.alignGuides = []; if (state.tool !== 'partition') state.partitionPreview = null; renderCanvas();
 }
 
 function handleTap(point, event) {
@@ -676,10 +837,12 @@ function handleTap(point, event) {
   if (state.tool === 'partition') return;
   if (state.tool === 'room') {
     if (storey.rooms?.length) {
-      const match = closestWall(storey, world, Math.max(.3, 26 / state.view.scale));
-      if (match) { const grown = growRoomBoxFromWall(storey, match.wall); startPendingRoom(grown.box, grown.fixed); return; }
+      const match = closestWall(storey, world, Math.max(.35, 30 / state.view.scale));
+      if (match) { placeRoomNow(growRoomBoxFromWall(storey, match.wall).box); return; }
+      flash('Tap an external wall to grow the next room from it');
+      return;
     }
-    startPendingRoom(defaultRoomBox(world)); return;
+    placeRoomNow(defaultRoomBox(world)); return;
   }
   if (state.tool === 'place') {
     const placement = state.placement; if (!placement) return;
@@ -761,22 +924,43 @@ function closestSurveyItem(storey, point, tolerance) { let closest = null; for (
 // ----------------------------------------------------- symbols & openings ---
 // One grouped dropdown places every symbol and opening. Each group has a colour.
 
-function populateSymbolPicker() {
-  if (!elements.symbolPicker) return;
-  const openings = Object.entries(OPENING_TYPES).map(([style, meta]) => `<option value="open:${style}">${escapeHTML(meta.label)}</option>`).join('');
-  const groups = Object.entries(SYMBOL_GROUPS).map(([key, group]) => {
-    if (key === 'other') return `<optgroup label="Other"><option value="custom">Custom label…</option></optgroup>`;
-    const options = Object.entries(group.items).map(([kind, meta]) => `<option value="sym:${kind}">${escapeHTML(meta.label)}</option>`).join('');
-    return `<optgroup label="${escapeHTML(group.label)}">${options}</optgroup>`;
-  }).join('');
-  elements.symbolPicker.innerHTML = `<option value="">Add symbol or opening…</option><optgroup label="Openings">${openings}</optgroup>${groups}`;
-  if (elements.customSymbolGroup) elements.customSymbolGroup.innerHTML = Object.entries(SYMBOL_GROUPS).map(([key, group]) => `<option value="${key}">${escapeHTML(group.label)}</option>`).join('');
+// The rail: colour-coded group chips + one row of icon buttons for the active
+// group. Everything is one tap away — no scrolling through a dropdown.
+const RAIL_SHORT = { heating_producers: 'Producers', heating_emitters: 'Emitters', heating_controls: 'Controls' };
+const RAIL_GROUPS = [
+  { key: 'openings', label: 'Openings', color: '#5b9ab4' },
+  ...Object.entries(SYMBOL_GROUPS).map(([key, group]) => ({ key, label: group.label, color: group.color }))
+].map(group => ({ ...group, short: RAIL_SHORT[group.key] || group.label }));
+
+function railItemsFor(groupKey) {
+  if (groupKey === 'openings') return Object.entries(OPENING_TYPES).map(([style, meta]) => ({ value: `open:${style}`, label: meta.label, icon: iconFor(style), color: meta.base === 'window' ? '#5b9ab4' : '#ec5a35' }));
+  const group = SYMBOL_GROUPS[groupKey]; if (!group) return [];
+  return Object.entries(group.items).map(([kind, meta]) => ({ value: kind === 'custom' ? 'custom' : `sym:${kind}`, label: meta.label, icon: iconFor(kind), color: group.color }));
 }
+
+function renderRail() {
+  if (!elements.railGroups) return;
+  elements.railGroups.innerHTML = RAIL_GROUPS.map(group =>
+    `<button class="rail-chip ${group.key === state.railGroup ? 'active' : ''}" data-rail-group="${group.key}" style="--chip:${group.color}" role="tab" aria-selected="${group.key === state.railGroup}"><span class="lbl-full">${escapeHTML(group.label)}</span><span class="lbl-short">${escapeHTML(group.short)}</span></button>`).join('');
+  const armed = state.placement ? (state.placement.mode === 'opening' ? `open:${state.placement.style}` : (state.placement.kind === 'custom' ? 'custom' : `sym:${state.placement.kind}`)) : '';
+  elements.railItems.innerHTML = railItemsFor(state.railGroup).map(item =>
+    `<button class="rail-item ${item.value === armed ? 'active' : ''}" data-rail-item="${item.value}" style="--tint:${item.color}" title="${escapeHTML(item.label)}">
+       <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#${item.icon}"/></svg><span>${escapeHTML(item.label)}</span>
+     </button>`).join('');
+  if (elements.customSymbolGroup && !elements.customSymbolGroup.options.length) elements.customSymbolGroup.innerHTML = Object.entries(SYMBOL_GROUPS).map(([key, group]) => `<option value="${key}">${escapeHTML(group.label)}</option>`).join('');
+}
+
+function selectRailGroup(key) { state.railGroup = key; toggleCustomRow(false); renderRail(); }
 
 function toggleCustomRow(show) { elements.customSymbolRow?.classList.toggle('hidden', !show); }
 
+function disarmPlacement() { state.placement = null; toggleCustomRow(false); if (state.tool === 'place') state.tool = 'select'; render(); }
+
 function armPlacementFromPicker(value) {
-  if (!value) { state.placement = null; toggleCustomRow(false); if (state.tool === 'place') state.tool = 'select'; render(); return; }
+  if (!value) return disarmPlacement();
+  // tapping the armed item again turns it off
+  const current = state.placement ? (state.placement.mode === 'opening' ? `open:${state.placement.style}` : (state.placement.kind === 'custom' ? 'custom' : `sym:${state.placement.kind}`)) : '';
+  if (value === current) return disarmPlacement();
   if (value === 'custom') { toggleCustomRow(true); return; }
   toggleCustomRow(false);
   if (value.startsWith('open:')) state.placement = { mode: 'opening', style: value.slice(5) };
@@ -806,7 +990,49 @@ function showConfirm({ title, message, action, confirmText }) { state.pendingCon
 function deleteWall() { const storey = activeStorey(); const wall = getWall(storey, state.selection?.id); if (!wall) return; showConfirm({ title: 'Delete this wall?', message: 'This also removes its openings. The remaining outline will be reconnected.', confirmText: 'Delete wall', action: () => transaction('delete wall', () => { const removeIndex = wall.from; storey.boxes = []; storey.outline.splice(removeIndex, 1); storey.is_closed = storey.outline.length >= 3; syncWalls(storey); state.selection = null; }) }); }
 function deleteOpening() { const found = findOpening(state.selection?.id); if (!found) return; transaction('delete opening', () => { found.host.openings = found.host.openings.filter(opening => opening.id !== found.opening.id); state.selection = null; }); }
 function deletePartition() { const storey = activeStorey(); const id = state.selection?.id; if (!id) return; showConfirm({ title: 'Delete this internal wall?', message: 'This also removes any doors or windows attached to the internal wall.', confirmText: 'Delete wall', action: () => transaction('delete internal wall', () => { storey.partitions = storey.partitions.filter(partition => partition.id !== id); state.selection = null; }) }); }
-function deleteRoom() { const storey = activeStorey(); const id = state.selection?.id; if (!id) return; transaction('delete room', () => { storey.rooms = storey.rooms.filter(room => room.id !== id); state.selection = null; }); }
+function deleteRoom() { const storey = activeStorey(); const id = state.selection?.id; if (!id) return; transaction('delete room', () => { storey.rooms = storey.rooms.filter(room => room.id !== id); rebuildStoreyFromRooms(storey); state.selection = null; }); }
+
+function duplicateRoom() {
+  const storey = activeStorey(); const room = storey.rooms?.find(item => item.id === state.selection?.id); if (!room) return;
+  const box = boundsOf(room.polygon);
+  const spot = [{ x: box.x + box.width, y: box.y }, { x: box.x, y: box.y + box.depth }, { x: box.x - box.width, y: box.y }, { x: box.x, y: box.y - box.depth }]
+    .find(candidate => boxesConnected([...storey.rooms.map(item => boundsOf(item.polygon)), { ...box, ...candidate }]));
+  if (!spot) { flash('No free edge to duplicate onto'); return; }
+  transaction('duplicate room', () => {
+    const copy = createRoom({ ...clone(room), id: undefined, name: `${room.name} copy`, polygon: rectPolygon({ ...box, ...spot }) });
+    storey.rooms.push(copy); rebuildStoreyFromRooms(storey); state.selection = { type: 'room', id: copy.id };
+  });
+}
+
+function duplicateItem() {
+  const storey = activeStorey(); const item = storey.survey_items?.find(entry => entry.id === state.selection?.id); if (!item) return;
+  transaction('duplicate symbol', () => {
+    const copy = { ...clone(item), id: newId('item'), point: { x: item.point.x + .4, y: item.point.y + .4 } };
+    storey.survey_items.push(copy); state.selection = { type: 'item', id: copy.id };
+  });
+}
+
+// Quick wall-type cycling straight from the plan.
+function cycleWallType() {
+  const storey = activeStorey(); const wall = getWall(storey, state.selection?.id); if (!wall) return;
+  const order = Object.keys(WALL_TYPES); const next = order[(order.indexOf(wall.type) + 1) % order.length];
+  transaction('change wall type', () => { wall.type = next; });
+  flash(`Wall set to ${WALL_TYPES[next]}`);
+}
+
+function editRoomSize() {
+  const storey = activeStorey(); const room = storey.rooms?.find(item => item.id === state.selection?.id); if (!room) return;
+  const box = boundsOf(room.polygon); const centre = screenPoint({ x: box.x + box.width / 2, y: box.y + box.depth / 2 });
+  openDimensionEditor({ kind: 'room-size', roomId: room.id, centre });
+}
+
+function deleteSelection() {
+  const type = state.selection?.type;
+  if (type === 'room') deleteRoom();
+  else if (type === 'item') deleteSurveyItem();
+  else if (type === 'opening') deleteOpening();
+  else if (type === 'partition') deletePartition();
+}
 function deleteSurveyItem() { const storey = activeStorey(); const id = state.selection?.id; if (!id) return; transaction('delete survey item', () => { storey.survey_items = storey.survey_items.filter(item => item.id !== id); state.selection = null; }); }
 function clearOutline() { if (!activeStorey().outline.length) return; showConfirm({ title: 'Clear this storey?', message: 'This removes the shell, rooms, internal walls, openings and survey items on the active storey. This can be undone.', confirmText: 'Clear storey', action: () => transaction('clear storey', () => { const storey = activeStorey(); storey.boxes = []; storey.outline = []; storey.is_closed = false; storey.walls = []; storey.rooms = []; storey.partitions = []; storey.survey_items = []; state.selection = null; }) }); }
 function finishOutline() {
@@ -859,11 +1085,25 @@ function setPendingRoomSize(field, value) {
   Object.assign(state.pendingRoom, boxFromPending(state.pendingRoom));
 }
 
-function startPendingRoom(box, fixed = null) {
-  const name = `Room ${(activeStorey().rooms?.length || 0) + 1}`;
-  state.pendingRoom = { ...normaliseBox(box), name, fixed }; state.roomError = ''; state.selection = null; render();
-  const widthHit = state.dimensionHits.find(hit => hit.kind === 'room' && hit.field === 'width'); if (widthHit) openDimensionEditor(widthHit);
+// Instant placement: the room lands on the plan immediately, selected, with its
+// handles and dimension chips live. No draft/confirm step (research: every good
+// editor places first and lets you adjust after).
+function placeRoomNow(box) {
+  const storey = activeStorey(); const rect = normaliseBox(box);
+  if (rect.width < .1 || rect.depth < .1) return null;
+  const existing = (storey.rooms || []).map(room => boundsOf(room.polygon));
+  if (existing.length && !boxesConnected([...existing, rect])) { flash('New rooms must touch an existing room along a wall'); return null; }
+  let created = null;
+  transaction('add room', () => {
+    created = createRoom({ name: `Room ${(storey.rooms?.length || 0) + 1}`, polygon: rectPolygon(rect) });
+    storey.rooms.push(created);
+    if (!rebuildStoreyFromRooms(storey)) { storey.rooms.pop(); rebuildStoreyFromRooms(storey); created = null; }
+  });
+  if (created) { state.selection = { type: 'room', id: created.id }; render(); }
+  return created;
 }
+
+function flash(message) { state.interactionNotice = message; render(); clearTimeout(state.flashTimer); state.flashTimer = setTimeout(() => { state.interactionNotice = ''; render(); }, 2600); }
 
 // Which side of a room's rectangle an external wall lies on (for edge resizing).
 function wallSideOfRoom(room, wall, storey, eps = 1e-6) {
@@ -932,15 +1172,31 @@ function safeFilename() { return (state.plan.property_address || 'future-floor-p
 function download(blob, filename) { const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = filename; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 
 function handleAction(action) {
-  const actions = { undo, redo, 'fit-plan': fitPlan, 'clear-outline': clearOutline, 'finish-outline': finishOutline, 'sample-plan': loadSample, 'clear-dimension': clearDimension, 'new-storey': newStorey, 'duplicate-storey': duplicateStorey, 'delete-wall': deleteWall, 'delete-opening': deleteOpening, 'delete-partition': deletePartition, 'delete-room': deleteRoom, 'delete-item': deleteSurveyItem, 'split-wall': () => setTool('split'), 'apply-box': applyBox, 'cancel-box': cancelBox, 'apply-room': commitPendingRoom, 'cancel-room': cancelRoom, 'arm-custom': armCustomSymbol, deselect: () => { state.selection = null; render(); }, 'export-json': exportJson, 'export-png': exportPng, 'zoom-in': () => zoomBy(1.2), 'zoom-out': () => zoomBy(.83) };
+  const actions = { undo, redo, 'fit-plan': fitPlan, 'clear-outline': clearOutline, 'finish-outline': finishOutline, 'sample-plan': loadSample, 'clear-dimension': clearDimension, 'new-storey': newStorey, 'duplicate-storey': duplicateStorey, 'delete-wall': deleteWall, 'delete-opening': deleteOpening, 'delete-partition': deletePartition, 'delete-room': deleteRoom, 'delete-item': deleteSurveyItem, 'split-wall': () => setTool('split'), 'apply-box': applyBox, 'cancel-box': cancelBox, 'apply-room': commitPendingRoom, 'cancel-room': cancelRoom, 'arm-custom': armCustomSymbol, deselect: () => { state.selection = null; render(); }, 'export-json': exportJson, 'export-png': exportPng, 'zoom-in': () => zoomBy(1.2), 'zoom-out': () => zoomBy(.83),
+    'duplicate-room': duplicateRoom, 'duplicate-item': duplicateItem, 'cycle-wall-type': cycleWallType, 'edit-room-size': editRoomSize };
   actions[action]?.();
 }
 function zoomBy(amount) { const centre = { x: frame.clientWidth / 2, y: frame.clientHeight / 2 }; const focus = worldPoint(centre); state.view.scale = Math.max(20, Math.min(220, state.view.scale * amount)); state.view.x = centre.x - focus.x*state.view.scale; state.view.y = centre.y - focus.y*state.view.scale; renderCanvas(); }
 
 document.addEventListener('click', event => {
+  const railGroup = event.target.closest('[data-rail-group]'); if (railGroup) { selectRailGroup(railGroup.dataset.railGroup); return; }
+  const railItem = event.target.closest('[data-rail-item]'); if (railItem) { armPlacementFromPicker(railItem.dataset.railItem); return; }
   const tool = event.target.closest('[data-tool]'); if (tool) { setTool(tool.dataset.tool); return; }
   const action = event.target.closest('[data-action]'); if (action) { handleAction(action.dataset.action); return; }
   const storey = event.target.closest('[data-storey]'); if (storey) selectStorey(storey.dataset.storey);
+});
+
+// Keyboard: fast on desktop, harmless on tablet.
+document.addEventListener('keydown', event => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
+  if (event.key === 'Escape') { if (state.measurementEditor) hideDimensionEditor(); else if (state.placement) disarmPlacement(); else if (state.selection) { state.selection = null; render(); } return; }
+  if (typing) return;
+  if ((event.key === 'Delete' || event.key === 'Backspace') && state.selection) { event.preventDefault(); deleteSelection(); return; }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); event.shiftKey ? redo() : undo(); return; }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd' && state.selection?.type === 'room') { event.preventDefault(); duplicateRoom(); return; }
+  if (event.key === 'Enter' && state.selection?.type === 'room') { event.preventDefault(); editRoomSize(); return; }
+  if (event.key === 'r' || event.key === 'R') setTool('room');
+  if (event.key === 'v' || event.key === 'V') setTool('select');
 });
 
 elements.address.addEventListener('change', () => transaction('change address', () => { state.plan.property_address = elements.address.value; }, { remember: false }));
@@ -999,7 +1255,6 @@ window.addEventListener('resize', resizeCanvas); window.addEventListener('before
 async function initialise() {
   const existing = await loadPlan(); state.plan = existing?.geometry?.storeys ? existing : createPlan(); state.activeStoreyId = state.plan.geometry.storeys[0]?.id;
   for (const storey of state.plan.geometry.storeys) { if (storey.is_closed === undefined) storey.is_closed = Boolean(storey.walls?.length); ensureStoreySurveyData(storey); }
-  populateSymbolPicker();
   state.tool = activeStorey()?.rooms?.length ? 'select' : 'room';
   resizeCanvas(); render(); requestAnimationFrame(() => { if (activeStorey()?.outline.length) fitPlan(); });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});

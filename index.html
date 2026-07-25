@@ -12,6 +12,31 @@
     <title>Future Floor Plans</title>
   </head>
   <body>
+    <svg class="icon-sprite" aria-hidden="true" focusable="false">
+      <symbol id="i-radiator" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="10" rx="1.5"/><path d="M7 8.5v7M10.5 8.5v7M14 8.5v7M17.5 8.5v7"/></symbol>
+      <symbol id="i-trv" viewBox="0 0 24 24"><rect x="3" y="8" width="15" height="9" rx="1.5"/><path d="M6.5 9.5v6M10 9.5v6M13.5 9.5v6"/><circle cx="20" cy="7" r="2.4"/></symbol>
+      <symbol id="i-boiler" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8.5 8h7M8.5 12h7"/><circle cx="12" cy="16.5" r="1.6"/></symbol>
+      <symbol id="i-cylinder" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="5"/><path d="M7 8h10"/></symbol>
+      <symbol id="i-meter" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2"/><circle cx="12" cy="12" r="4"/><path d="M12 12l2.4-2"/></symbol>
+      <symbol id="i-unit" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9v6M11 9v6M15 9v6M19 9v6" /></symbol>
+      <symbol id="i-tap" viewBox="0 0 24 24"><path d="M6 20h12"/><path d="M12 20V9"/><path d="M8 9h8"/><path d="M12 9V6a3 3 0 0 1 6 0"/></symbol>
+      <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 3c3 4 6 5.5 6 9.5A6 6 0 0 1 6 12.5C6 9.5 8 8 9 6c.6 1.7 1.5 2.4 3 3 .4-2.2-.2-4-0-6z"/></symbol>
+      <symbol id="i-heater" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10c1.2 1.2 1.2 2.8 0 4M12 10c1.2 1.2 1.2 2.8 0 4M17 10c1.2 1.2 1.2 2.8 0 4"/></symbol>
+      <symbol id="i-thermostat" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 12V7.5"/><circle cx="12" cy="12" r="1.6"/></symbol>
+      <symbol id="i-programmer" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10h6M7 14h4"/><circle cx="17" cy="12" r="1.8"/></symbol>
+      <symbol id="i-light" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 1 4 10.4V16H8v-2.6A6 6 0 0 1 12 3z"/><path d="M9.5 19h5M10.5 21.5h3"/></symbol>
+      <symbol id="i-door" viewBox="0 0 24 24"><path d="M6 21V4h9v17"/><path d="M15 21a9 9 0 0 0-9-9"/><circle cx="12.4" cy="12.8" r="1"/></symbol>
+      <symbol id="i-door-double" viewBox="0 0 24 24"><path d="M12 21V5M4 21V5h16v16"/><path d="M12 12a8 8 0 0 0-8 8M12 12a8 8 0 0 1 8 8"/></symbol>
+      <symbol id="i-door-slide" viewBox="0 0 24 24"><path d="M3 6h18M3 18h18"/><path d="M4 9h8v6H4zM12 9h8v6h-8z"/></symbol>
+      <symbol id="i-door-bifold" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M3 6l4 7 4-7 4 7 4-7"/></symbol>
+      <symbol id="i-garage" viewBox="0 0 24 24"><path d="M3 20V9l9-5 9 5v11"/><path d="M6 20v-7h12v7M6 16h12"/></symbol>
+      <symbol id="i-window" viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="8" rx="1"/><path d="M3 12h18"/></symbol>
+      <symbol id="i-window-bay" viewBox="0 0 24 24"><path d="M3 8h18"/><path d="M3 8l4 8h10l4-8"/></symbol>
+      <symbol id="i-window-fixed" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1"/><path d="M12 6v12M4 12h16"/></symbol>
+      <symbol id="i-roof-window" viewBox="0 0 24 24"><path d="M4 18L12 5l8 13z"/><path d="M8 18l8-8"/></symbol>
+      <symbol id="i-custom" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    </svg>
+
     <div class="app-shell">
       <header class="app-header">
         <a class="brand" href="./" aria-label="Future Floor Plans home">
@@ -52,16 +77,13 @@
             <button class="tool-button" data-tool="split"><b>+</b>Split wall</button>
             <button class="tool-button" data-tool="north"><b>↑</b>Set north</button>
           </div>
-          <label class="picker-field">Add symbol or opening
-            <select id="symbolPicker" aria-label="Choose a symbol or opening to place"></select>
-          </label>
           <div id="customSymbolRow" class="custom-symbol hidden">
             <label>Custom label<input id="customSymbolLabel" type="text" placeholder="e.g. MVHR unit" /></label>
             <label>Group / colour<select id="customSymbolGroup"></select></label>
             <button class="secondary-button full-width" data-action="arm-custom">Place custom symbol</button>
           </div>
           <p class="field-note" id="placementNote"></p>
-          <div class="hidden" aria-hidden="true"><input id="dimensionInput" type="hidden" /><input id="orthogonalInput" type="checkbox" checked /></div>
+          <div class="hidden" aria-hidden="true"><select id="symbolPicker"></select><input id="dimensionInput" type="hidden" /><input id="orthogonalInput" type="checkbox" checked /></div>
         </section>
 
         <section class="panel-section quick-actions">
@@ -76,6 +98,10 @@
       </aside>
 
       <main class="workspace">
+        <div class="symbol-rail">
+          <div class="rail-groups" id="railGroups" role="tablist" aria-label="Symbol groups"></div>
+          <div class="rail-items" id="railItems" role="toolbar" aria-label="Place a symbol or opening"></div>
+        </div>
         <div class="workspace-topbar">
           <div><span class="eyebrow" id="storeyKicker">Ground floor</span><strong id="instructionText">Tap and drag to pan · tap a wall to inspect it</strong></div>
           <div class="canvas-status"><span class="dot"></span><span id="zoomReadout">100%</span><button data-action="zoom-in" aria-label="Zoom in">+</button><button data-action="zoom-out" aria-label="Zoom out">−</button></div>
@@ -84,6 +110,7 @@
           <canvas id="planCanvas" aria-label="Floor plan drawing canvas">Your browser does not support the canvas element.</canvas>
           <div class="canvas-hint" id="canvasHint"><b>Add your first room</b><span>Drag to size a room, then type its exact width and depth. Grow the next room off an existing wall — the outline builds itself.</span></div>
           <form class="dimension-popover hidden" id="dimensionPopover" aria-label="Set a measurement"></form>
+          <div class="context-bar hidden" id="contextBar" role="toolbar" aria-label="Selection actions"></div>
           <button class="canvas-quick-action hidden" id="finishOutlineButton" type="button" data-action="finish-outline">Finish shape</button>
           <div class="north-indicator" id="northIndicator" aria-hidden="true"><span>↑</span><small>N</small></div>
           <div class="scale-indicator"><span id="scaleBar"></span><small id="scaleLabel">1 m</small></div>
