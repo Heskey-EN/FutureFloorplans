@@ -39,7 +39,8 @@ const state = {
   drawPreview: null, boxPreview: null, pendingBox: null, pendingRoom: null, roomPreview: null, partitionPreview: null, partitionStart: null,
   boxError: '', roomError: '', derived: null, saveTimer: null, pendingConfirm: null,
   dimensionHits: [], measurementEditor: null, closureSuggestion: null, interactionNotice: '', snapGuide: null,
-  placement: null, railGroup: 'openings', alignGuides: [], hover: null, flashTimer: null
+  placement: null, railGroup: 'openings', alignGuides: [], hover: null, flashTimer: null,
+  coarsePointer: false, ghostPoint: null, snapOff: false, lastPointer: null, pointerSpeed: 0
 };
 
 function activeStorey() { return state.plan.geometry.storeys.find(storey => storey.id === state.activeStoreyId) || state.plan.geometry.storeys[0]; }
@@ -118,13 +119,29 @@ function snapWorldPoint(raw, { surface = false, exclude = [] } = {}) {
   return { x: snappedX, y: snappedY };
 }
 // Full-height/width guides while a room is being dragged into alignment.
+// Finite guides spanning only the geometry they relate, extended 40px past each
+// end — canvas-spanning lines are noise on a floor plan.
 function drawAlignGuides() {
   if (!state.alignGuides?.length) return;
-  ctx.save(); ctx.strokeStyle = '#ec5a35'; ctx.lineWidth = 1.5; setLineDash([7, 5]);
+  const storey = activeStorey(); const pad = 40;
+  const ys = (storey.rooms || []).flatMap(room => room.polygon.map(point => point.y));
+  const xs = (storey.rooms || []).flatMap(room => room.polygon.map(point => point.x));
+  if (!xs.length) return;
+  ctx.save(); ctx.strokeStyle = '#ff6b6b'; ctx.lineWidth = 1; setLineDash([5, 4]);
   for (const guide of state.alignGuides) {
     ctx.beginPath();
-    if (guide.x != null) { const x = Math.round(screenPoint({ x: guide.x, y: 0 }).x) + .5; ctx.moveTo(x, 0); ctx.lineTo(x, frame.clientHeight); }
-    if (guide.y != null) { const y = Math.round(screenPoint({ x: 0, y: guide.y }).y) + .5; ctx.moveTo(0, y); ctx.lineTo(frame.clientWidth, y); }
+    if (guide.x != null) {
+      const x = Math.round(screenPoint({ x: guide.x, y: 0 }).x) + .5;
+      const a = screenPoint({ x: guide.x, y: Math.min(...ys) }).y - pad;
+      const b = screenPoint({ x: guide.x, y: Math.max(...ys) }).y + pad;
+      ctx.moveTo(x, a); ctx.lineTo(x, b);
+    }
+    if (guide.y != null) {
+      const y = Math.round(screenPoint({ x: 0, y: guide.y }).y) + .5;
+      const a = screenPoint({ x: Math.min(...xs), y: guide.y }).x - pad;
+      const b = screenPoint({ x: Math.max(...xs), y: guide.y }).x + pad;
+      ctx.moveTo(a, y); ctx.lineTo(b, y);
+    }
     ctx.stroke();
   }
   setLineDash([]); ctx.restore();
@@ -225,6 +242,63 @@ function drawRoom(room) {
   const centre = screenPoint(roomCentroid(room)); const name = room.name || 'Unnamed room'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '800 12px ui-sans-serif, system-ui'; const width = Math.max(76, ctx.measureText(name).width + 18);
   ctx.fillStyle = selected ? '#ec5a35' : 'rgba(255,255,255,.94)'; ctx.fillRect(centre.x - width / 2, centre.y - 20, width, 24); ctx.fillStyle = selected ? '#fff' : '#25475b'; ctx.fillText(name, centre.x, centre.y - 8);
   ctx.font = '700 10px ui-sans-serif, system-ui'; ctx.fillStyle = selected ? '#fff7f2' : '#637882'; ctx.fillText(squareMetres(roomArea(room)), centre.x, centre.y + 7); ctx.restore();
+}
+
+// Pointer-aware sizing (Excalidraw ships mouse 8 / pen 16 / touch 28).
+const COARSE = () => state.coarsePointer;
+const handleSize = () => (COARSE() ? 15 : 9);
+const hitSlop = () => (COARSE() ? 32 : 18) / state.view.scale;
+
+// Handles on the selected room: corners resize both axes, edge midpoints resize
+// one. Drawn in screen space so they never scale with zoom.
+function drawRoomHandles(room) {
+  const box = boundsOf(room.polygon);
+  const half = handleSize() / 2;
+  const corners = [{ x: box.x, y: box.y }, { x: box.x + box.width, y: box.y }, { x: box.x + box.width, y: box.y + box.depth }, { x: box.x, y: box.y + box.depth }];
+  const edges = [
+    { p: { x: box.x + box.width / 2, y: box.y }, side: 'top' },
+    { p: { x: box.x + box.width, y: box.y + box.depth / 2 }, side: 'right' },
+    { p: { x: box.x + box.width / 2, y: box.y + box.depth }, side: 'bottom' },
+    { p: { x: box.x, y: box.y + box.depth / 2 }, side: 'left' }
+  ];
+  ctx.save();
+  const edgePx = Math.min(box.width, box.depth) * state.view.scale;
+  if (edgePx > 44) for (const edge of edges) {           // suppress on tiny rooms
+    const s = screenPoint(edge.p);
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = '#ec5a35'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(s.x - half, s.y - half * .7, handleSize(), handleSize() * .7, 2); ctx.fill(); ctx.stroke();
+  }
+  for (const corner of corners) {
+    const s = screenPoint(corner);
+    ctx.fillStyle = '#ec5a35'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(s.x - half, s.y - half, handleSize(), handleSize(), 2); ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// Ghost of whatever is armed, following the pointer (Gridsnap uses alpha .55).
+function drawPlacementGhost() {
+  const placement = state.placement; const point = state.ghostPoint;
+  if (!placement || !point) return;
+  ctx.save(); ctx.globalAlpha = .55;
+  if (placement.mode === 'symbol') {
+    drawSurveyItem({ kind: placement.kind, group: placement.group, label: placement.label || '', point });
+  } else {
+    const storey = activeStorey();
+    const match = closestSurface(storey, point, Math.max(.3, 26 / state.view.scale));
+    const preset = OPENING_TYPES[placement.style];
+    if (match) {
+      const host = match.host; const surface = match.surface;
+      const from = surface === 'external' ? storey.outline[host.from] : host.from;
+      const to = surface === 'external' ? storey.outline[host.to] : host.to;
+      drawSegmentOpening(from, to, { ...makeOpening(placement.style, Math.max(0, match.offset_m - (preset?.width_m || 1) / 2)), id: '__ghost' });
+    } else {
+      const s = screenPoint(point);
+      ctx.strokeStyle = '#98a6ac'; ctx.lineWidth = 2; setLineDash([4, 4]);
+      ctx.beginPath(); ctx.arc(s.x, s.y, 13, 0, Math.PI * 2); ctx.stroke(); setLineDash([]);
+    }
+  }
+  ctx.restore();
 }
 
 function drawInternalWall(segment) {
@@ -351,6 +425,8 @@ function drawClosureSuggestion() {
 function renderCanvas() {
   const rect = frame.getBoundingClientRect(); if (!rect.width || !rect.height) return;
   state.dimensionHits = []; ctx.clearRect(0, 0, rect.width, rect.height); drawGrid(rect.width, rect.height); drawHover(); drawPlan(); drawPreview(); drawBoxPreview(); drawRoomPreview(); drawPartitionPreview(); drawClosureSuggestion(); drawAlignGuides(); drawSnapGuide();
+  if (state.selection?.type === 'room') { const room = activeStorey().rooms?.find(item => item.id === state.selection.id); if (room) drawRoomHandles(room); }
+  drawPlacementGhost();
   const scaleLength = state.view.scale >= 110 ? 1 : state.view.scale >= 55 ? 2 : 5; const scalePx = Math.min(90, Math.max(32, state.view.scale * scaleLength));
   elements.scaleBar.style.width = `${scalePx}px`; elements.scaleLabel.textContent = `${scaleLength} m`; elements.zoomReadout.textContent = `${Math.round(state.view.scale / 65 * 100)}%`;
   elements.northIndicator.querySelector('span').style.transform = `rotate(${Number(state.plan.north_offset_deg || 0)}deg)`;
@@ -668,6 +744,17 @@ function pointerDown(event) {
   }
   if (state.tool !== 'select' || state.pendingBox || state.pendingRoom) return;
   const storey = activeStorey(); const world = worldPoint(point);
+  // corner handles of the selected room take priority (biggest, most precise)
+  if (state.selection?.type === 'room') {
+    const room = storey.rooms?.find(item => item.id === state.selection.id);
+    if (room) {
+      const box = boundsOf(room.polygon); const slop = hitSlop();
+      const corners = [{ x: box.x, y: box.y, sx: 'left', sy: 'top' }, { x: box.x + box.width, y: box.y, sx: 'right', sy: 'top' },
+        { x: box.x + box.width, y: box.y + box.depth, sx: 'right', sy: 'bottom' }, { x: box.x, y: box.y + box.depth, sx: 'left', sy: 'bottom' }];
+      const grabbed = corners.find(corner => Math.abs(corner.x - world.x) <= slop && Math.abs(corner.y - world.y) <= slop);
+      if (grabbed) { state.drag = { ...state.drag, mode: 'corner', roomId: room.id, sx: grabbed.sx, sy: grabbed.sy, before: snapshot(), changed: false }; return; }
+    }
+  }
   const wallHit = closestWall(storey, world, Math.max(.18, 16 / state.view.scale));
   if (wallHit && isAxisAlignedWall(storey, wallHit.wall)) {
     const room = roomOwningWall(storey, wallHit.wall); const side = wallSideOfRoom(room, wallHit.wall, storey);
@@ -714,7 +801,10 @@ function snapToOutlineAxes(point, outline, { exclude = [] } = {}) {
 // Snap a moving room's edges to other rooms' edges; returns the offset plus the
 // guide lines to draw. Magnetic within ~14 screen px, otherwise falls to grid.
 function snapRoomMove(storey, roomId, box) {
-  const tol = Math.max(.1, 14 / state.view.scale);
+  // Ctrl/Cmd disables snapping; fast flicks suppress it too so it never fights
+  // the drag (tldraw suppresses snap-seeking above a velocity threshold).
+  if (state.snapOff || state.pointerSpeed > 28) return { box, guides: [] };
+  const tol = (state.coarsePointer ? 14 : 8) / state.view.scale;   // 8 screen px, 14 on touch
   const targetsX = []; const targetsY = [];
   for (const other of storey.rooms || []) {
     if (other.id === roomId) continue;
@@ -732,8 +822,18 @@ function snapRoomMove(storey, roomId, box) {
 }
 
 function updateGeometryDrag(point) {
-  const drag = state.drag; if (!drag || (drag.mode !== 'wall' && drag.mode !== 'partition-end' && drag.mode !== 'room-move')) return false;
+  const drag = state.drag; if (!drag || !['wall', 'partition-end', 'room-move', 'corner'].includes(drag.mode)) return false;
   const storey = activeStorey(); const raw = worldPoint(point);
+  if (drag.mode === 'corner') {
+    const room = storey.rooms?.find(item => item.id === drag.roomId); if (!room) return false;
+    const snapped = snapWorldPoint(raw);
+    const trial = clone(room); resizeRoomEdge(trial, drag.sx, snapped.x); resizeRoomEdge(trial, drag.sy, snapped.y);
+    const others = storey.rooms.filter(item => item.id !== room.id).map(item => boundsOf(item.polygon));
+    if (others.length && !boxesConnected([...others, boundsOf(trial.polygon)])) return false;
+    resizeRoomEdge(room, drag.sx, snapped.x); resizeRoomEdge(room, drag.sy, snapped.y);
+    if (!rebuildStoreyFromRooms(storey)) return false;
+    clampOpenings(storey); drag.changed = true; return true;
+  }
   if (drag.mode === 'room-move') {
     const room = storey.rooms?.find(item => item.id === drag.roomId); if (!room) return false;
     const rawBox = { x: drag.origin.x + (raw.x - drag.grabWorld.x), y: drag.origin.y + (raw.y - drag.grabWorld.y), width: drag.origin.width, depth: drag.origin.depth };
@@ -796,12 +896,20 @@ function updateHover(point) {
 
 function pointerMove(event) {
   const point = clientPoint(event);
-  if (!state.pointers.has(event.pointerId)) { if (event.pointerType !== 'touch') updateHover(point); return; }
+  state.coarsePointer = event.pointerType === 'touch';
+  state.snapOff = event.ctrlKey || event.metaKey;                       // Ctrl/Cmd = temporarily off
+  if (state.lastPointer) state.pointerSpeed = Math.hypot(point.x - state.lastPointer.x, point.y - state.lastPointer.y);
+  state.lastPointer = point;
+  if (!state.pointers.has(event.pointerId)) {
+    if (state.tool === 'place') { state.ghostPoint = snapWorldPoint(worldPoint(point)); renderCanvas(); }
+    if (event.pointerType !== 'touch') updateHover(point);
+    return;
+  }
   state.pointers.set(event.pointerId, point);
   if (state.pointers.size >= 2 && state.gesture) { const [a, b] = [...state.pointers.values()]; const nextDistance = distance(a, b); const nextMid = midpoint(a, b); const scale = Math.min(220, Math.max(20, state.gesture.startScale * nextDistance / Math.max(1, state.gesture.startDistance))); const focusWorld = worldFromView(state.gesture.startMid, state.gesture.startView, state.gesture.startScale); state.view.scale = scale; state.view.x = nextMid.x - focusWorld.x * scale; state.view.y = nextMid.y - focusWorld.y * scale; renderCanvas(); return; }
   if (!state.drag || state.drag.id !== event.pointerId) return; const dx = point.x - state.drag.start.x; const dy = point.y - state.drag.start.y;
   if (Math.hypot(dx, dy) > 4) state.drag.moved = true;
-  if (state.drag.mode === 'wall' || state.drag.mode === 'partition-end' || state.drag.mode === 'room-move') updateGeometryDrag(point);
+  if (['wall','partition-end','room-move','corner'].includes(state.drag.mode)) updateGeometryDrag(point);
   else if (state.tool === 'draw') state.drawPreview = constrainedPoint(point, event);
   else if (state.drag.mode === 'partition-draw') state.partitionPreview = snapWorldPoint(worldPoint(point), { exclude: [state.partitionStart] });
   else if (state.tool === 'room') state.roomPreview = boxFromDrag(state.drag.start, point);
@@ -825,7 +933,7 @@ function pointerUp(event) {
     } else if ((state.tool === 'box' || state.tool === 'extend') && drag.moved && state.boxPreview?.width > 0 && state.boxPreview?.depth > 0) {
       state.pendingBox = { ...state.boxPreview, mode: state.tool }; state.boxError = ''; state.selection = null; render();
       const widthHit = state.dimensionHits.find(hit => hit.kind === 'box' && hit.field === 'width'); if (widthHit) openDimensionEditor(widthHit);
-    } else if (drag.mode === 'wall' || drag.mode === 'partition-end' || drag.mode === 'room-move') {
+    } else if (['wall','partition-end','room-move','corner'].includes(drag.mode)) {
       if (drag.changed) commitGeometryDrag(drag); else handleTap(point, event);
     } else if (!drag.moved || state.tool === 'draw') handleTap(point, event);
   }
