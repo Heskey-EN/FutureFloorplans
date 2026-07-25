@@ -20,10 +20,86 @@ export const ROOM_USES = {
   room_in_roof: 'Room in roof', excluded: 'Excluded space'
 };
 
-export const SURVEY_ITEM_TYPES = {
-  radiator: 'Radiator', storage_heater: 'Storage heater', panel_heater: 'Panel heater',
-  underfloor_heating: 'Underfloor heating zone', boiler: 'Boiler', heat_pump: 'Heat pump',
-  fireplace: 'Fireplace', ventilation: 'Ventilation unit'
+// Placeable symbols, grouped. Each GROUP owns a colour — every symbol of that
+// nature renders in the group colour (e.g. heating emitters are yellow). The
+// short code is drawn on the symbol badge on the plan.
+export const SYMBOL_GROUPS = {
+  services: {
+    label: 'Services', color: '#3b82f6',
+    items: {
+      electric_meter: { label: 'Electric Meter', code: 'EM' },
+      consumer_unit: { label: 'Consumer Unit', code: 'CU' },
+      gas_meter: { label: 'Gas Meter', code: 'GM' },
+      stop_tap: { label: 'Stop Tap', code: 'ST' }
+    }
+  },
+  heating_producers: {
+    label: 'Heating Producers', color: '#e2803a',
+    items: {
+      combi_gas_boiler: { label: 'Combi Gas Boiler', code: 'CB' },
+      reg_gas_boiler: { label: 'Regular Gas Boiler', code: 'RB' },
+      electric_boiler: { label: 'Electric Boiler', code: 'EB' },
+      oil_boiler: { label: 'Oil Boiler', code: 'OB' },
+      back_boiler: { label: 'Back Boiler', code: 'BB' },
+      water_cylinder: { label: 'Water Cylinder', code: 'HW' }
+    }
+  },
+  heating_emitters: {
+    label: 'Heating Emitters', color: '#f2c200',
+    items: {
+      radiator: { label: 'Radiator', code: 'RAD' },
+      radiator_trv: { label: 'Radiator with TRV', code: 'TRV' },
+      electric_heater: { label: 'Electric Heater', code: 'EH' },
+      electric_storage: { label: 'Electric Storage Heater', code: 'ESH' },
+      gas_fire: { label: 'Gas Fire', code: 'GF' }
+    }
+  },
+  heating_controls: {
+    label: 'Heating Controls', color: '#c9a227',
+    items: {
+      programmer: { label: 'Programmer', code: 'PRG' },
+      thermostat: { label: 'Thermostat', code: 'TH' },
+      programmable_thermostat: { label: 'Programmable Thermostat', code: 'PT' }
+    }
+  },
+  lights: {
+    label: 'Lights', color: '#8b5cf6',
+    items: {
+      light_high_energy: { label: 'High Energy', code: 'HE' },
+      light_low_energy: { label: 'Low Energy', code: 'LE' }
+    }
+  },
+  other: {
+    label: 'Other', color: '#64748b',
+    items: { custom: { label: 'Custom label…', code: '＋' } }
+  }
+};
+
+const KIND_GROUP = {}; const KIND_META = {};
+for (const [groupKey, group] of Object.entries(SYMBOL_GROUPS)) for (const [kind, meta] of Object.entries(group.items)) { KIND_GROUP[kind] = groupKey; KIND_META[kind] = meta; }
+
+// Flat kind→label map (back-compat + item inspector select).
+export const SURVEY_ITEM_TYPES = Object.fromEntries(Object.entries(KIND_META).map(([kind, meta]) => [kind, meta.label]));
+
+export function symbolGroupOf(item) { return item?.group || KIND_GROUP[item?.kind] || 'other'; }
+export function symbolColor(item) { return SYMBOL_GROUPS[symbolGroupOf(item)]?.color || '#64748b'; }
+export function symbolCode(item) { return (item?.kind === 'custom' ? (item.label || '?').slice(0, 3).toUpperCase() : KIND_META[item?.kind]?.code) || '?'; }
+export function symbolLabel(kind) { return KIND_META[kind]?.label || kind; }
+
+// Opening presets (doors & windows). Each maps to an RdSAP base kind
+// (window | door | glazed_door) with sensible default sizes.
+export const OPENING_TYPES = {
+  window: { label: 'Window (casement)', base: 'window', width_m: 1.2, height_m: 1.2 },
+  bay_window: { label: 'Bay window', base: 'window', width_m: 1.8, height_m: 1.3 },
+  sliding_window: { label: 'Sliding window', base: 'window', width_m: 1.5, height_m: 1.2 },
+  fixed_window: { label: 'Fixed / picture window', base: 'window', width_m: 1.5, height_m: 1.3 },
+  roof_window: { label: 'Roof window / skylight', base: 'window', width_m: 0.8, height_m: 0.8 },
+  door: { label: 'Door (single)', base: 'door', width_m: 0.9, height_m: 2 },
+  double_door: { label: 'Double door', base: 'door', width_m: 1.5, height_m: 2 },
+  french_door: { label: 'French doors', base: 'glazed_door', width_m: 1.5, height_m: 2, glazed_area_ratio: 0.7 },
+  patio_door: { label: 'Patio / sliding door', base: 'glazed_door', width_m: 1.8, height_m: 2, glazed_area_ratio: 0.7 },
+  bifold_door: { label: 'Bi-fold door', base: 'glazed_door', width_m: 2.4, height_m: 2, glazed_area_ratio: 0.8 },
+  garage_door: { label: 'Garage door', base: 'door', width_m: 2.4, height_m: 2.1 }
 };
 
 export function distance(a, b) { return Math.hypot(b.x - a.x, b.y - a.y); }
@@ -173,8 +249,8 @@ export function makePartition(from, to, { thickness_m = .1, name = 'Internal wal
   return { id: newId('pt'), from: clone(from), to: clone(to), thickness_m, name, openings: [] };
 }
 
-export function makeSurveyItem(kind = 'radiator', point = { x: 0, y: 0 }) {
-  return { id: newId('item'), kind, point: clone(point), label: '', fuel: '', notes: '' };
+export function makeSurveyItem(kind = 'radiator', point = { x: 0, y: 0 }, { group = null, label = '' } = {}) {
+  return { id: newId('item'), kind, group: group || KIND_GROUP[kind] || 'other', point: clone(point), label, fuel: '', notes: '' };
 }
 
 export function ensureStoreySurveyData(storey) {
@@ -294,9 +370,158 @@ export function splitExternalWall(storey, wallId, point, epsilon = .05) {
   return { storey: next, vertexIndex: insertedAt, wallId: first.id, newWallId: second.id };
 }
 
-export function makeOpening(kind = 'window', offset_m = 0) {
+export function makeOpening(styleOrKind = 'window', offset_m = 0) {
+  const preset = OPENING_TYPES[styleOrKind];
+  const style = preset ? styleOrKind : (styleOrKind === 'glazed_door' ? 'french_door' : styleOrKind);
+  const kind = preset ? preset.base : styleOrKind;                 // window | door | glazed_door
   const isDoor = kind === 'door' || kind === 'glazed_door';
-  return { id: newId('op'), kind, offset_m, width_m: isDoor ? 0.9 : 1.2, height_m: isDoor ? 2 : 1.2, frame_material: 'uPVC', glazing_type: isDoor ? 'N/A' : 'Double', glazing_depth_mm: isDoor ? null : 16, glazing_age_band: 'Unknown', glazed_area_ratio: kind === 'glazed_door' ? 0.7 : null, orientation_overridden: false, orientation: null };
+  const width_m = preset?.width_m ?? (isDoor ? 0.9 : 1.2);
+  const height_m = preset?.height_m ?? (isDoor ? 2 : 1.2);
+  const glazed_area_ratio = preset?.glazed_area_ratio ?? (kind === 'glazed_door' ? 0.7 : null);
+  return { id: newId('op'), kind, style, offset_m, width_m, height_m, frame_material: 'uPVC', glazing_type: isDoor ? 'N/A' : 'Double', glazing_depth_mm: isDoor ? null : 16, glazing_age_band: 'Unknown', glazed_area_ratio, orientation_overridden: false, orientation: null };
+}
+
+/* ------------------------------------------------------------------ rooms --
+ * Room-first model: each room is an axis-aligned rectangle. The storey outline
+ * is the union of the rooms (via outlineFromBoxes); external walls, HLP, floor
+ * area and openings all derive from that outline exactly as before. Shared edges
+ * between adjacent rooms are internal walls.
+ */
+
+export function boundsOf(polygon = []) {
+  if (!polygon.length) return { x: 0, y: 0, width: 0, depth: 0 };
+  const xs = polygon.map(point => point.x); const ys = polygon.map(point => point.y);
+  const minX = Math.min(...xs); const minY = Math.min(...ys);
+  return { x: minX, y: minY, width: Math.max(...xs) - minX, depth: Math.max(...ys) - minY };
+}
+
+export function rectPolygon(box) {
+  const b = normaliseBox(box);
+  return [{ x: b.x, y: b.y }, { x: b.x + b.width, y: b.y }, { x: b.x + b.width, y: b.y + b.depth }, { x: b.x, y: b.y + b.depth }];
+}
+
+/** True when every box shares a real edge with the connected set — the
+ * condition outlineFromBoxes needs to produce a single outline. */
+export function boxesConnected(boxes = []) {
+  const norm = boxes.map(normaliseBox).filter(box => box.width > 0 && box.depth > 0);
+  if (norm.length <= 1) return true;
+  const seen = new Set([0]); const stack = [0];
+  while (stack.length) {
+    const i = stack.pop();
+    for (let j = 0; j < norm.length; j += 1) {
+      if (seen.has(j)) continue;
+      if (boxesTouchOrOverlap([norm[i]], norm[j])) { seen.add(j); stack.push(j); }
+    }
+  }
+  return seen.size === norm.length;
+}
+
+/** Axis-aligned segment description for a wall/outline edge. */
+function edgeAxis(from, to, epsilon = 1e-6) {
+  const horizontal = Math.abs(from.y - to.y) < epsilon; const vertical = Math.abs(from.x - to.x) < epsilon;
+  if (!horizontal && !vertical) return null;
+  return {
+    horizontal, vertical, line: horizontal ? from.y : from.x,
+    lo: horizontal ? Math.min(from.x, to.x) : Math.min(from.y, to.y),
+    hi: horizontal ? Math.max(from.x, to.x) : Math.max(from.y, to.y)
+  };
+}
+
+/**
+ * Carries wall type, heat-loss treatment and openings from a previous outline
+ * onto freshly synced walls, matched by GEOMETRY (same supporting line, over-
+ * lapping span) rather than corner index — so attributes survive the outline
+ * renumbering that happens whenever a room is added, moved or resized.
+ */
+export function preserveWallData(oldWalls = [], oldOutline = [], storey) {
+  const epsilon = 1e-6;
+  const olds = oldWalls.map(wall => {
+    const from = oldOutline[wall.from]; const to = oldOutline[wall.to]; if (!from || !to) return null;
+    const axis = edgeAxis(from, to); if (!axis) return null;
+    return { wall, from, to, ...axis };
+  }).filter(Boolean);
+  for (const wall of storey.walls) {
+    const from = storey.outline[wall.from]; const to = storey.outline[wall.to]; if (!from || !to) continue;
+    const axis = edgeAxis(from, to); if (!axis) continue;
+    let best = null; let bestOverlap = epsilon;
+    for (const old of olds) {
+      if (old.horizontal !== axis.horizontal || Math.abs(old.line - axis.line) > 1e-3) continue;
+      const overlap = Math.min(old.hi, axis.hi) - Math.max(old.lo, axis.lo);
+      if (overlap > bestOverlap) { bestOverlap = overlap; best = old; }
+    }
+    if (!best) continue;
+    wall.type = best.wall.type; wall.heat_loss_mode = best.wall.heat_loss_mode; wall.heat_loss_height_m = best.wall.heat_loss_height_m ?? null;
+    const newLength = distance(from, to);
+    const dirX = Math.sign(to.x - from.x); const dirY = Math.sign(to.y - from.y);
+    const oDirX = Math.sign(best.to.x - best.from.x); const oDirY = Math.sign(best.to.y - best.from.y);
+    const kept = [];
+    for (const opening of best.wall.openings || []) {
+      const absStart = { x: best.from.x + oDirX * (Number(opening.offset_m) || 0), y: best.from.y + oDirY * (Number(opening.offset_m) || 0) };
+      const offset = axis.horizontal ? (absStart.x - from.x) * dirX : (absStart.y - from.y) * dirY;
+      if (offset >= -epsilon && offset + (Number(opening.width_m) || 0) <= newLength + epsilon) kept.push({ ...opening, offset_m: Math.max(0, offset) });
+    }
+    wall.openings = kept;
+  }
+  return storey;
+}
+
+/** Rebuilds outline + walls from the storey's rooms. Returns false (leaving the
+ * storey untouched) when the rooms don't form one connected footprint. */
+export function rebuildStoreyFromRooms(storey) {
+  ensureStoreySurveyData(storey);
+  const rooms = storey.rooms || [];
+  const boxes = rooms.map(room => boundsOf(room.polygon)).filter(box => box.width > 0 && box.depth > 0);
+  if (!boxes.length) { storey.boxes = []; storey.outline = []; storey.is_closed = false; storey.walls = []; return true; }
+  if (!boxesConnected(boxes)) return false;
+  const oldWalls = clone(storey.walls || []); const oldOutline = clone(storey.outline || []);
+  storey.boxes = boxes; storey.outline = outlineFromBoxes(boxes); storey.is_closed = storey.outline.length >= 3;
+  syncWalls(storey, { preserve: false });
+  preserveWallData(oldWalls, oldOutline, storey);
+  return true;
+}
+
+/** Shared edges between adjacent rooms — drawn as internal walls. */
+export function internalWallsFromRooms(storey) {
+  const boxes = (storey.rooms || []).map(room => boundsOf(room.polygon)); const epsilon = 1e-6; const segments = [];
+  for (let i = 0; i < boxes.length; i += 1) for (let j = i + 1; j < boxes.length; j += 1) {
+    const a = boxes[i]; const b = boxes[j]; const ar = a.x + a.width; const br = b.x + b.width; const ab = a.y + a.depth; const bb = b.y + b.depth;
+    const yLo = Math.max(a.y, b.y); const yHi = Math.min(ab, bb);
+    if (yHi - yLo > epsilon) {
+      if (Math.abs(ar - b.x) < epsilon) segments.push({ from: { x: ar, y: yLo }, to: { x: ar, y: yHi } });
+      else if (Math.abs(br - a.x) < epsilon) segments.push({ from: { x: a.x, y: yLo }, to: { x: a.x, y: yHi } });
+    }
+    const xLo = Math.max(a.x, b.x); const xHi = Math.min(ar, br);
+    if (xHi - xLo > epsilon) {
+      if (Math.abs(ab - b.y) < epsilon) segments.push({ from: { x: xLo, y: ab }, to: { x: xHi, y: ab } });
+      else if (Math.abs(bb - a.y) < epsilon) segments.push({ from: { x: xLo, y: a.y }, to: { x: xHi, y: a.y } });
+    }
+  }
+  return segments;
+}
+
+/** The room whose rectangle owns a given external wall edge (for resizing). */
+export function roomOwningWall(storey, wall, epsilon = 1e-6) {
+  const from = storey.outline[wall.from]; const to = storey.outline[wall.to]; if (!from || !to) return null;
+  const axis = edgeAxis(from, to); if (!axis) return null;
+  const mid = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+  for (const room of storey.rooms || []) {
+    const box = boundsOf(room.polygon); const right = box.x + box.width; const bottom = box.y + box.depth;
+    if (axis.horizontal && (Math.abs(box.y - axis.line) < epsilon || Math.abs(bottom - axis.line) < epsilon) && mid.x >= box.x - epsilon && mid.x <= right + epsilon) return room;
+    if (axis.vertical && (Math.abs(box.x - axis.line) < epsilon || Math.abs(right - axis.line) < epsilon) && mid.y >= box.y - epsilon && mid.y <= bottom + epsilon) return room;
+  }
+  return null;
+}
+
+/** Resizes a room's rectangle by moving one external edge to a new coordinate,
+ * keeping the opposite edge fixed. side: 'left'|'right'|'top'|'bottom'. */
+export function resizeRoomEdge(room, side, value) {
+  const box = boundsOf(room.polygon); let { x, y, width, depth } = box; const right = x + width; const bottom = y + depth;
+  if (side === 'left') { x = Math.min(value, right - 0.1); width = right - x; }
+  else if (side === 'right') { width = Math.max(0.1, value - x); }
+  else if (side === 'top') { y = Math.min(value, bottom - 0.1); depth = bottom - y; }
+  else if (side === 'bottom') { depth = Math.max(0.1, value - y); }
+  room.polygon = rectPolygon({ x, y, width, depth });
+  return room;
 }
 
 export function createPlan() {

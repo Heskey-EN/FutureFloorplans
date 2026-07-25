@@ -79,6 +79,12 @@ input[type="range"] { width: 100%; height: 24px; margin-top: 7px; accent-color: 
 .dimension-field { margin-top: 14px; }.dimension-field > span { float: right; color: #99a5aa; font-weight: 600; }.dimension-field > div { display: flex; margin-top: 6px; }.dimension-field input { margin: 0; border-radius: 5px 0 0 5px; }.mini-button { width: 38px; color: var(--ink-soft); font-size: 19px; background: #edf1f2; border: 1px solid var(--line-dark); border-left: 0; border-radius: 0 5px 5px 0; }
 .toggle-row { display: flex; align-items: center; gap: 8px; margin-top: 13px; padding: 9px 0 0; border-top: 1px solid #e5eaec; }.toggle-row input { width: 17px; height: 17px; margin: 0; accent-color: var(--orange); }.toggle-row em { margin-left: auto; color: #9aa6ab; font-style: normal; font-size: 14px; }
 .action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }.action-grid .secondary-button { padding: 0 6px; }
+.hidden { display: none !important; }
+.picker-field { display: block; margin-top: 14px; color: var(--ink-soft); font-size: 11px; font-weight: 750; }
+.picker-field select { width: 100%; height: 40px; margin-top: 6px; padding: 0 9px; color: var(--ink); font-size: 13px; font-weight: 650; background: #fff; border: 1px solid var(--line-dark); border-radius: 5px; }
+.custom-symbol { margin-top: 10px; padding: 11px; background: #f0f4f5; border: 1px solid var(--line); border-radius: 6px; }
+.custom-symbol label { display: block; margin-bottom: 9px; color: var(--ink-soft); font-size: 11px; font-weight: 750; }
+.custom-symbol select { width: 100%; height: 38px; margin-top: 6px; padding: 0 9px; font-size: 13px; background: #fff; border: 1px solid var(--line-dark); border-radius: 5px; }
 
 .workspace { position: relative; display: grid; min-width: 0; min-height: 0; grid-template-rows: 56px minmax(0, 1fr) auto; background: var(--canvas); }
 .workspace-topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 17px; border-bottom: 1px solid var(--line); background: #f9fbfb; }.workspace-topbar .eyebrow { display: block; margin-bottom: 2px; }.workspace-topbar strong { display: block; font-size: 12px; font-weight: 650; color: #52616c; }

@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { boxesTouchOrOverlap, createPlan, createRoom, createStorey, derivePlan, makeOpening, moveAxisAlignedWall, moveVertex, outlineFromBoxes, polygonArea, resizeWall, splitExternalWall, syncWalls, wallOrientation } from '../js/geometry.js';
+import { boxesConnected, boxesTouchOrOverlap, createPlan, createRoom, createStorey, derivePlan, internalWallsFromRooms, makeOpening, moveAxisAlignedWall, moveVertex, outlineFromBoxes, polygonArea, rebuildStoreyFromRooms, rectPolygon, resizeWall, segmentLength, splitExternalWall, syncWalls, wallOrientation } from '../js/geometry.js';
+
+function roomBox(name, x, y, width, depth) { return createRoom({ name, polygon: rectPolygon({ x, y, width, depth }) }); }
+function verticalWallAtX(storey, xValue) {
+  return storey.walls.find(wall => { const a = storey.outline[wall.from]; const b = storey.outline[wall.to]; return Math.abs(a.x - xValue) < 1e-6 && Math.abs(b.x - xValue) < 1e-6; });
+}
 
 function rectangularPlan() {
   const plan = createPlan();
@@ -100,4 +105,49 @@ test('named rooms are retained as survey data alongside the shell geometry', () 
   storey.rooms.push(createRoom({ name: 'Kitchen', polygon: [{ x: 0, y: 0 }, { x: 3, y: 0 }, { x: 3, y: 2 }, { x: 0, y: 2 }], light_count: 4 }));
   const derived = derivePlan(plan).per_storey[0];
   assert.equal(derived.room_count, 1); assert.equal(derived.heated_room_count, 1); assert.equal(derived.light_count, 4); assert.equal(derived.rooms[0].area_m2, 6);
+});
+
+/* ---------------------------------------------------------- room-first model */
+
+test('two rooms union into one outline; shared edge is internal, not heat-loss', () => {
+  const plan = createPlan(); const storey = createStorey({ height_m: 2.4 });
+  storey.rooms = [roomBox('Lounge', 0, 0, 4, 3), roomBox('Kitchen', 4, 0, 3, 3)];
+  assert.equal(rebuildStoreyFromRooms(storey), true);
+  plan.geometry.storeys = [storey];
+  const derived = derivePlan(plan).per_storey[0];
+  assert.equal(derived.floor_area_m2, 21);            // 12 + 9, shared edge not double counted
+  assert.equal(derived.heat_loss_perimeter_m, 20);    // union perimeter 2×(7+3), shared edge excluded
+  const internal = internalWallsFromRooms(storey);
+  assert.equal(internal.length, 1);
+  assert.equal(segmentLength(internal[0]), 3);         // the shared wall at x=4
+});
+
+test('wall type and openings survive adding a neighbouring room', () => {
+  const storey = createStorey({ height_m: 2.4 });
+  storey.rooms = [roomBox('Lounge', 0, 0, 4, 3)];
+  rebuildStoreyFromRooms(storey);
+  const left = verticalWallAtX(storey, 0);
+  left.type = 'party'; left.openings.push({ ...makeOpening('window', 1), width_m: 1 });
+  storey.rooms.push(roomBox('Kitchen', 4, 0, 3, 3));   // added on the far side
+  assert.equal(rebuildStoreyFromRooms(storey), true);
+  const newLeft = verticalWallAtX(storey, 0);
+  assert.equal(newLeft.type, 'party');
+  assert.equal(newLeft.openings.length, 1);
+  assert.ok(Math.abs(newLeft.openings[0].offset_m - 1) < 1e-6);
+});
+
+test('three rooms form an L-shaped outline with summed area', () => {
+  const storey = createStorey({ height_m: 2.4 });
+  storey.rooms = [roomBox('A', 0, 0, 3, 3), roomBox('B', 3, 0, 3, 3), roomBox('C', 0, 3, 3, 3)];
+  assert.equal(rebuildStoreyFromRooms(storey), true);
+  assert.equal(polygonArea(storey.outline), 27);
+});
+
+test('disconnected rooms are rejected so the outline never breaks', () => {
+  assert.equal(boxesConnected([{ x: 0, y: 0, width: 3, depth: 3 }, { x: 3, y: 0, width: 3, depth: 3 }]), true);
+  assert.equal(boxesConnected([{ x: 0, y: 0, width: 3, depth: 3 }, { x: 10, y: 10, width: 3, depth: 3 }]), false);
+  const storey = createStorey({ height_m: 2.4 });
+  storey.rooms = [roomBox('A', 0, 0, 3, 3), roomBox('B', 10, 10, 3, 3)];
+  assert.equal(rebuildStoreyFromRooms(storey), false);
+  assert.equal(storey.outline.length, 0);             // left untouched
 });

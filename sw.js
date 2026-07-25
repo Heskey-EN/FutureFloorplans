@@ -1,13 +1,22 @@
-const CACHE = 'future-floor-plans-v5';
+const CACHE = 'future-floor-plans-v6';
 const APP_SHELL = ['./', './index.html', './styles.css', './js/app.js', './js/geometry.js', './js/storage.js', './manifest.webmanifest', './assets/icon.svg'];
 
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())));
-self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+self.addEventListener('activate', event => event.waitUntil((async () => {
+  const keys = await caches.keys();
+  await Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)));
+  await self.clients.claim();
+})()));
+const DEV = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
-  event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request).then(response => {
-    const copy = response.clone();
-    if (new URL(event.request.url).origin === location.origin) caches.open(CACHE).then(cache => cache.put(event.request, copy));
-    return response;
-  }).catch(() => caches.match('./index.html'))));
+  const sameOrigin = new URL(event.request.url).origin === location.origin;
+  const cachePut = response => { if (sameOrigin && response.ok) { const copy = response.clone(); caches.open(CACHE).then(cache => cache.put(event.request, copy)); } return response; };
+  if (DEV && sameOrigin) {
+    // Local development: network-first so code edits appear on reload; cache backs offline.
+    event.respondWith(fetch(event.request).then(cachePut).catch(() => caches.match(event.request).then(hit => hit || caches.match('./index.html'))));
+    return;
+  }
+  // Production: cache-first (offline-first app shell).
+  event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request).then(cachePut).catch(() => caches.match('./index.html'))));
 });

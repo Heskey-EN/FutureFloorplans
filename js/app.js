@@ -1,6 +1,6 @@
 import {
-  ROOM_USES, SURVEY_ITEM_TYPES, WALL_TYPES, boxesTouchOrOverlap, clone, closestPartition, closestWall, createPlan, createRoom, createSamplePlan, createStorey, derivePlan,
-  distance, ensureStoreySurveyData, getWall, isSelfIntersecting, makeOpening, makePartition, makeSurveyItem, metres, moveAxisAlignedWall, moveVertex, newId, normaliseBox, outlineFromBoxes, pointAlong, polygonArea, projectPointToSegment, resizeWall, roomArea, roomCentroid, segmentLength, splitExternalWall, squareMetres, syncWalls, wallLength
+  OPENING_TYPES, ROOM_USES, SURVEY_ITEM_TYPES, SYMBOL_GROUPS, WALL_TYPES, boundsOf, boxesConnected, boxesTouchOrOverlap, clone, closestPartition, closestWall, createPlan, createRoom, createSamplePlan, createStorey, derivePlan,
+  distance, ensureStoreySurveyData, getWall, internalWallsFromRooms, isSelfIntersecting, makeOpening, makePartition, makeSurveyItem, metres, moveAxisAlignedWall, moveVertex, newId, normaliseBox, outlineFromBoxes, pointAlong, polygonArea, projectPointToSegment, rebuildStoreyFromRooms, rectPolygon, resizeRoomEdge, resizeWall, roomArea, roomCentroid, roomOwningWall, segmentLength, splitExternalWall, squareMetres, symbolCode, symbolColor, symbolGroupOf, symbolLabel, syncWalls, wallLength
 } from './geometry.js';
 import { loadPlan, savePlan } from './storage.js';
 
@@ -16,7 +16,8 @@ const elements = {
   area: $('#floorAreaMetric'), hlp: $('#hlpMetric'), wallArea: $('#wallAreaMetric'), openings: $('#openingMetric'),
   inspectorHeading: $('#inspectorHeading'), selectionBadge: $('#selectionBadge'), inspector: $('#inspectorContent'),
   warningCount: $('#warningCount'), warnings: $('#warningsList'), dialog: $('#confirmDialog'), dialogTitle: $('#dialogTitle'),
-  dialogMessage: $('#dialogMessage'), dialogConfirm: $('#dialogConfirm'), dimensionPopover: $('#dimensionPopover'), finishOutline: $('#finishOutlineButton')
+  dialogMessage: $('#dialogMessage'), dialogConfirm: $('#dialogConfirm'), dimensionPopover: $('#dimensionPopover'), finishOutline: $('#finishOutlineButton'),
+  symbolPicker: $('#symbolPicker'), customSymbolRow: $('#customSymbolRow'), customSymbolLabel: $('#customSymbolLabel'), customSymbolGroup: $('#customSymbolGroup'), placementNote: $('#placementNote')
 };
 
 const state = {
@@ -24,7 +25,8 @@ const state = {
   view: { scale: 65, x: 80, y: 70, initialised: false }, pointers: new Map(), gesture: null, drag: null,
   drawPreview: null, boxPreview: null, pendingBox: null, pendingRoom: null, roomPreview: null, partitionPreview: null, partitionStart: null,
   boxError: '', roomError: '', derived: null, saveTimer: null, pendingConfirm: null,
-  dimensionHits: [], measurementEditor: null, closureSuggestion: null, interactionNotice: '', snapGuide: null
+  dimensionHits: [], measurementEditor: null, closureSuggestion: null, interactionNotice: '', snapGuide: null,
+  placement: null
 };
 
 function activeStorey() { return state.plan.geometry.storeys.find(storey => storey.id === state.activeStoreyId) || state.plan.geometry.storeys[0]; }
@@ -146,13 +148,25 @@ function setLineDash(dash) { ctx.setLineDash(dash); }
 
 function drawSegmentOpening(from, to, opening) {
   const length = distance(from, to); if (!length) return;
+  const style = opening.style || opening.kind;
   const start = pointAlong(from, to, Math.max(0, Math.min(1, opening.offset_m / length))); const end = pointAlong(from, to, Math.max(0, Math.min(1, (opening.offset_m + opening.width_m) / length)));
-  const screenStart = screenPoint(start); const screenEnd = screenPoint(end); const isSelected = state.selection?.type === 'opening' && state.selection.id === opening.id;
-  ctx.save(); ctx.strokeStyle = opening.kind === 'door' ? '#ec5a35' : '#5b9ab4'; ctx.lineWidth = isSelected ? 9 : 7; ctx.lineCap = 'square'; ctx.beginPath(); ctx.moveTo(screenStart.x, screenStart.y); ctx.lineTo(screenEnd.x, screenEnd.y); ctx.stroke();
-  if (opening.kind === 'door' || opening.kind === 'glazed_door') {
-    const dx = screenEnd.x - screenStart.x; const dy = screenEnd.y - screenStart.y; const hypot = Math.hypot(dx, dy) || 1; const nx = -dy / hypot; const ny = dx / hypot;
-    ctx.lineWidth = 1.5; ctx.strokeStyle = '#ec5a35'; ctx.beginPath(); ctx.arc(screenStart.x, screenStart.y, Math.min(Math.hypot(dx, dy), 38), Math.atan2(ny, nx), Math.atan2(dy, dx), false); ctx.stroke();
-  }
+  const a = screenPoint(start); const b = screenPoint(end); const isSelected = state.selection?.type === 'opening' && state.selection.id === opening.id;
+  const isDoor = opening.kind === 'door' || opening.kind === 'glazed_door';
+  const colour = isSelected ? '#ec5a35' : (isDoor ? '#ec5a35' : '#5b9ab4');
+  const dx = b.x - a.x; const dy = b.y - a.y; const hyp = Math.hypot(dx, dy) || 1; const ux = dx / hyp; const uy = dy / hyp; const nx = -uy; const ny = ux; const swingR = Math.min(hyp, 38);
+  ctx.save(); ctx.lineCap = 'square';
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = (isSelected ? 9 : 7) + 4; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();   // clear the wall behind it
+  ctx.strokeStyle = colour;
+  const line = offset => { ctx.beginPath(); ctx.moveTo(a.x + nx * offset, a.y + ny * offset); ctx.lineTo(b.x + nx * offset, b.y + ny * offset); ctx.stroke(); };
+  ctx.lineWidth = isSelected ? 7 : 5;
+  if (style === 'door') { line(0); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(a.x, a.y, swingR, Math.atan2(ny, nx), Math.atan2(uy, ux)); ctx.stroke(); }
+  else if (style === 'double_door' || style === 'french_door') { line(0); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(a.x, a.y, hyp / 2, Math.atan2(ny, nx), Math.atan2(uy, ux)); ctx.stroke(); ctx.beginPath(); ctx.arc(b.x, b.y, hyp / 2, Math.atan2(-uy, -ux), Math.atan2(ny, nx)); ctx.stroke(); }
+  else if (style === 'patio_door' || style === 'sliding_window') { ctx.lineWidth = isSelected ? 6 : 4; line(-2.5); line(2.5); }
+  else if (style === 'bifold_door') { ctx.lineWidth = isSelected ? 5 : 3; const panels = 4; const d = Math.min(hyp / panels, 26); ctx.beginPath(); for (let i = 0; i < panels; i++) { const s = i / panels; const m = (i + 0.5) / panels; const e = (i + 1) / panels; ctx.moveTo(a.x + ux * hyp * s, a.y + uy * hyp * s); ctx.lineTo(a.x + ux * hyp * m + nx * d, a.y + uy * hyp * m + ny * d); ctx.lineTo(a.x + ux * hyp * e, a.y + uy * hyp * e); } ctx.stroke(); }
+  else if (style === 'garage_door' || style === 'roof_window') { ctx.setLineDash([5, 4]); ctx.lineWidth = isSelected ? 6 : 4; line(0); ctx.setLineDash([]); }
+  else if (style === 'bay_window') { ctx.lineWidth = isSelected ? 4 : 2.5; const d = Math.min(hyp * 0.5, 30); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(a.x + ux * hyp * 0.2 + nx * d, a.y + uy * hyp * 0.2 + ny * d); ctx.lineTo(a.x + ux * hyp * 0.8 + nx * d, a.y + uy * hyp * 0.8 + ny * d); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+  else if (style === 'fixed_window') { ctx.lineWidth = isSelected ? 7 : 5; line(0); }
+  else { ctx.lineWidth = isSelected ? 6 : 4; line(-2); line(2); }   // casement / sliding window default: double glass line
   ctx.restore();
 }
 
@@ -168,6 +182,12 @@ function drawRoom(room) {
   ctx.font = '700 10px ui-sans-serif, system-ui'; ctx.fillStyle = selected ? '#fff7f2' : '#637882'; ctx.fillText(squareMetres(roomArea(room)), centre.x, centre.y + 7); ctx.restore();
 }
 
+function drawInternalWall(segment) {
+  const from = screenPoint(segment.from); const to = screenPoint(segment.to);
+  ctx.save(); ctx.strokeStyle = '#506975'; ctx.lineWidth = Math.max(3, Math.min(7, .09 * state.view.scale)); ctx.lineCap = 'square';
+  ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke(); ctx.restore();
+}
+
 function drawPartition(partition) {
   const from = screenPoint(partition.from); const to = screenPoint(partition.to); const selected = state.selection?.type === 'partition' && state.selection.id === partition.id;
   ctx.save(); ctx.strokeStyle = selected ? '#ec5a35' : '#506975'; ctx.lineWidth = selected ? 8 : Math.max(5, Math.min(9, Number(partition.thickness_m || .1) * state.view.scale)); ctx.lineCap = 'square'; ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
@@ -176,13 +196,22 @@ function drawPartition(partition) {
 }
 
 function drawSurveyItem(item) {
-  const point = screenPoint(item.point); const selected = state.selection?.type === 'item' && state.selection.id === item.id; const accent = selected ? '#ec5a35' : '#477d61';
-  ctx.save(); ctx.fillStyle = '#fff'; ctx.strokeStyle = accent; ctx.lineWidth = 2; ctx.beginPath();
-  if (item.kind === 'radiator' || item.kind === 'storage_heater' || item.kind === 'panel_heater') { ctx.roundRect(point.x - 14, point.y - 8, 28, 16, 3); ctx.fill(); ctx.stroke(); ctx.strokeStyle = accent; ctx.lineWidth = 1; for (let x = -8; x <= 8; x += 5) { ctx.beginPath(); ctx.moveTo(point.x + x, point.y - 5); ctx.lineTo(point.x + x, point.y + 5); ctx.stroke(); } }
-  else if (item.kind === 'heat_pump') { ctx.arc(point.x, point.y, 11, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.fillStyle = accent; ctx.font = '900 13px ui-sans-serif, system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('HP', point.x, point.y + .5); }
-  else if (item.kind === 'fireplace') { ctx.moveTo(point.x, point.y - 12); ctx.lineTo(point.x + 11, point.y + 10); ctx.lineTo(point.x - 11, point.y + 10); ctx.closePath(); ctx.fill(); ctx.stroke(); }
-  else { ctx.roundRect(point.x - 10, point.y - 10, 20, 20, 4); ctx.fill(); ctx.stroke(); ctx.fillStyle = accent; ctx.font = '900 11px ui-sans-serif, system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(item.kind === 'ventilation' ? 'V' : 'H', point.x, point.y + .5); }
-  if (item.label) { ctx.font = '700 10px ui-sans-serif, system-ui'; ctx.fillStyle = '#405b67'; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText(item.label, point.x, point.y + 14); }
+  const point = screenPoint(item.point); const selected = state.selection?.type === 'item' && state.selection.id === item.id;
+  const colour = selected ? '#ec5a35' : symbolColor(item); const code = symbolCode(item);
+  ctx.save(); ctx.fillStyle = '#fff'; ctx.strokeStyle = colour; ctx.lineWidth = 2; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if (['radiator', 'radiator_trv', 'electric_heater', 'electric_storage'].includes(item.kind)) {
+    ctx.beginPath(); ctx.roundRect(point.x - 16, point.y - 9, 32, 18, 3); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = colour; ctx.lineWidth = 1; for (let x = -11; x <= 11; x += 5) { ctx.beginPath(); ctx.moveTo(point.x + x, point.y - 6); ctx.lineTo(point.x + x, point.y + 6); ctx.stroke(); }
+    if (item.kind === 'radiator_trv') { ctx.fillStyle = colour; ctx.beginPath(); ctx.arc(point.x + 15, point.y - 8, 3.5, 0, Math.PI * 2); ctx.fill(); }
+  } else if (item.kind === 'gas_fire') {
+    ctx.beginPath(); ctx.roundRect(point.x - 15, point.y - 10, 30, 20, 3); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = colour; ctx.beginPath(); ctx.moveTo(point.x, point.y - 5); ctx.quadraticCurveTo(point.x + 7, point.y + 3, point.x, point.y + 8); ctx.quadraticCurveTo(point.x - 7, point.y + 3, point.x, point.y - 5); ctx.fill();
+  } else {
+    ctx.beginPath(); ctx.roundRect(point.x - 17, point.y - 11, 34, 22, 4); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = colour; ctx.font = '800 10px ui-sans-serif, system-ui'; ctx.fillText(code, point.x, point.y + .5);
+  }
+  const caption = item.label || symbolLabel(item.kind);
+  if (caption) { ctx.font = '700 10px ui-sans-serif, system-ui'; ctx.fillStyle = '#405b67'; ctx.textBaseline = 'top'; ctx.fillText(caption, point.x, point.y + 14); }
   ctx.restore();
 }
 
@@ -194,6 +223,7 @@ function drawPlan() {
   if (!closed) { setLineDash([6, 5]); ctx.strokeStyle = '#ec5a35'; ctx.lineWidth = 3; ctx.stroke(); setLineDash([]); ctx.restore(); return; }
   ctx.restore();
   for (const room of storey.rooms || []) drawRoom(room);
+  for (const segment of internalWallsFromRooms(storey)) drawInternalWall(segment);
   for (const partition of storey.partitions || []) drawPartition(partition);
   ctx.save();
   for (const wall of storey.walls) {
@@ -333,6 +363,7 @@ function renderInspector() {
     elements.inspectorHeading.textContent = room.name || 'Room'; elements.selectionBadge.textContent = 'Room';
     elements.inspector.innerHTML = `
       <div class="wall-chip"><i style="background:#5b9ab4"></i><span>Measured room area<strong>${squareMetres(roomArea(room))}</strong></span></div>
+      <div class="form-split"><label>Width (m)<input data-room-size="width" type="number" inputmode="decimal" min=".1" step=".01" value="${boundsOf(room.polygon).width.toFixed(2)}" /></label><label>Depth (m)<input data-room-size="depth" type="number" inputmode="decimal" min=".1" step=".01" value="${boundsOf(room.polygon).depth.toFixed(2)}" /></label></div>
       <label>Room name<input data-room-field="name" type="text" value="${escapeHTML(room.name || '')}" placeholder="e.g. Lounge" /></label>
       <label>Survey classification<select data-room-field="use">${Object.entries(ROOM_USES).map(([value, label]) => `<option value="${value}" ${room.use === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
       <div class="form-split"><label>Ceiling height (m)<input data-room-field="ceiling_height_m" type="number" inputmode="decimal" min="1.5" max="4.5" step=".01" value="${room.ceiling_height_m ?? ''}" /></label><label>Lights<input data-room-field="light_count" type="number" inputmode="numeric" min="0" step="1" value="${room.light_count ?? ''}" /></label></div>
@@ -341,10 +372,11 @@ function renderInspector() {
       <div class="inspector-action-row"><button class="secondary-button danger" data-action="delete-room">Delete room</button><button class="secondary-button" data-action="deselect">Done</button></div>`;
   } else if (state.selection?.type === 'item') {
     const item = storey.survey_items?.find(entry => entry.id === state.selection.id); if (!item) { state.selection = null; return renderInspector(); }
-    elements.inspectorHeading.textContent = SURVEY_ITEM_TYPES[item.kind] || 'Survey item'; elements.selectionBadge.textContent = 'Heating';
+    elements.inspectorHeading.textContent = item.label || symbolLabel(item.kind) || 'Survey item'; elements.selectionBadge.textContent = SYMBOL_GROUPS[symbolGroupOf(item)]?.label || 'Symbol';
     elements.inspector.innerHTML = `
-      <div class="wall-chip"><i style="background:#477d61"></i><span>Retrofit survey item<strong>${escapeHTML(SURVEY_ITEM_TYPES[item.kind] || item.kind)}</strong></span></div>
-      <label>Item type<select data-item-field="kind">${Object.entries(SURVEY_ITEM_TYPES).map(([value, label]) => `<option value="${value}" ${item.kind === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      <div class="wall-chip"><i style="background:${symbolColor(item)}"></i><span>${escapeHTML(SYMBOL_GROUPS[symbolGroupOf(item)]?.label || 'Symbol')}<strong>${escapeHTML(item.label || symbolLabel(item.kind))}</strong></span></div>
+      <label>Symbol<select data-item-field="kind">${Object.entries(SYMBOL_GROUPS).map(([groupKey, group]) => `<optgroup label="${escapeHTML(group.label)}">${Object.entries(group.items).map(([kind, meta]) => `<option value="${kind}" ${item.kind === kind ? 'selected' : ''}>${escapeHTML(meta.label)}</option>`).join('')}</optgroup>`).join('')}</select></label>
+      <label>Group / colour<select data-item-field="group">${Object.entries(SYMBOL_GROUPS).map(([groupKey, group]) => `<option value="${groupKey}" ${symbolGroupOf(item) === groupKey ? 'selected' : ''}>${escapeHTML(group.label)}</option>`).join('')}</select></label>
       <label>Label / reference<input data-item-field="label" type="text" value="${escapeHTML(item.label || '')}" placeholder="e.g. Living room radiator" /></label>
       <label>Fuel / system detail<input data-item-field="fuel" type="text" value="${escapeHTML(item.fuel || '')}" placeholder="e.g. Gas boiler, electric, ASHP" /></label>
       <label>Survey note<textarea data-item-field="notes" rows="3" placeholder="Controls, condition, ventilation or evidence">${escapeHTML(item.notes || '')}</textarea></label>
@@ -355,7 +387,7 @@ function renderInspector() {
     elements.inspectorHeading.textContent = opening.kind === 'window' ? 'Window' : (surface === 'partition' ? 'Internal door' : 'External door'); elements.selectionBadge.textContent = 'Opening';
     elements.inspector.innerHTML = `
       <div class="wall-chip"><i style="background:#5b9ab4"></i><span>Derived orientation<strong>${derivedOpening?.orientation || '—'}</strong></span></div>
-      <label>Opening type<select data-opening-field="kind"><option value="window" ${opening.kind === 'window' ? 'selected' : ''}>Window</option><option value="door" ${opening.kind === 'door' ? 'selected' : ''}>Door</option><option value="glazed_door" ${opening.kind === 'glazed_door' ? 'selected' : ''}>Highly glazed door</option></select></label>
+      <label>Opening type<select data-opening-field="style">${Object.entries(OPENING_TYPES).map(([style, meta]) => `<option value="${style}" ${(opening.style || opening.kind) === style ? 'selected' : ''}>${escapeHTML(meta.label)}</option>`).join('')}</select></label>
       <div class="form-split"><label>Width (m)<input data-opening-field="width_m" type="number" inputmode="decimal" min=".1" step=".01" value="${opening.width_m}" /></label><label>Height (m)<input data-opening-field="height_m" type="number" inputmode="decimal" min=".1" step=".01" value="${opening.height_m}" /></label></div>
       <label>Offset from left corner (m)<input data-opening-field="offset_m" type="number" inputmode="decimal" min="0" step=".01" value="${opening.offset_m}" /></label>
       <label>Glazed area ratio <input data-opening-field="glazed_area_ratio" type="number" inputmode="decimal" min="0" max="1" step=".01" placeholder="Use only to check door classification" value="${opening.glazed_area_ratio ?? ''}" /></label>
@@ -363,7 +395,7 @@ function renderInspector() {
       <div class="inspector-action-row"><button class="secondary-button danger" data-action="delete-opening">Delete</button><button class="secondary-button" data-action="deselect">Done</button></div>`;
   } else {
     elements.inspectorHeading.textContent = 'Survey plan'; elements.selectionBadge.textContent = 'Plan';
-    elements.inspector.innerHTML = `<div class="empty-state"><b>Build the shell, then survey the spaces inside it.</b>Use <strong>Add room</strong> for named room zones, <strong>Draw internal wall</strong> for partitions, then add doors, windows and heating/ventilation items. Split an external wall to add an editable corner for angled or stepped shapes.</div><div class="stat-stack"><div class="stat-card"><span>Shell area</span><strong>${squareMetres(derived?.floor_area_m2)}</strong></div><div class="stat-card"><span>Named rooms</span><strong>${derived?.room_count || 0}</strong></div></div><label>Storey name<input data-storey-field="name" type="text" value="${escapeHTML(storey.name)}" /></label><label>Storey height (m)<input data-storey-field="height_m" type="number" inputmode="decimal" min="2" max="3.5" step=".01" value="${storey.height_m}" /></label><p class="field-note">The plan records survey evidence for later RdSAP and retrofit workflows. Verify all dimensions and classifications before export.</p>`;
+    elements.inspector.innerHTML = `<div class="empty-state"><b>Build the plan room by room.</b>Use <strong>Add room</strong> to size the first room, then tap an external wall to grow the next room from it. Add doors, windows, services, heating and lights from the <strong>Add symbol or opening</strong> list. The outline, walls and heat-loss perimeter come from the rooms.</div><div class="stat-stack"><div class="stat-card"><span>Floor area</span><strong>${squareMetres(derived?.floor_area_m2)}</strong></div><div class="stat-card"><span>Rooms</span><strong>${derived?.room_count || 0}</strong></div></div><label>Storey name<input data-storey-field="name" type="text" value="${escapeHTML(storey.name)}" /></label><label>Storey height (m)<input data-storey-field="height_m" type="number" inputmode="decimal" min="2" max="3.5" step=".01" value="${storey.height_m}" /></label><p class="field-note">The plan records survey evidence for later RdSAP and retrofit workflows. Verify all dimensions and classifications before export.</p>`;
   }
 }
 
@@ -378,7 +410,8 @@ function renderMetrics() {
 }
 
 function surveyInstructions() {
-  if (state.tool === 'room') return activeStorey().is_closed ? 'Drag a room zone inside the shell · name it and record retrofit data in the inspector' : 'Draw the external shell first, then add rooms inside it';
+  if (state.tool === 'place') return state.placement?.mode === 'opening' ? `Tap a wall to add a ${placementLabel()}` : `Tap inside the plan to place a ${placementLabel()}`;
+  if (state.tool === 'room') return activeStorey().rooms?.length ? 'Tap an external wall to grow the next room from it — then type its width and depth' : 'Drag to size the first room, then type its exact width and depth';
   if (state.tool === 'partition') return state.partitionStart ? 'Tap the end of the internal wall · corners, walls and axes snap automatically' : 'Tap or drag to start an internal wall · then tap its end';
   if (state.tool === 'split') return 'Tap an external wall to insert an editable corner exactly on it';
   if (state.tool === 'door') return 'Tap any external or internal wall to add a door';
@@ -396,6 +429,7 @@ function render() {
   elements.address.value = state.plan.property_address || ''; elements.postcode.value = state.plan.postcode || ''; elements.north.value = String(Math.round(state.plan.north_offset_deg || 0)); elements.northReadout.textContent = `${Math.round(state.plan.north_offset_deg || 0)}°`;
   elements.storeyKicker.textContent = storey.name; elements.canvasHint.classList.toggle('hidden', storey.outline.length > 0 || Boolean(state.pendingBox) || Boolean(state.pendingRoom));
   elements.instruction.textContent = surveyInstructions(); document.querySelectorAll('.tool-button').forEach(button => button.classList.toggle('active', button.dataset.tool === state.tool));
+  if (elements.placementNote) elements.placementNote.textContent = state.placement ? `Placing ${placementLabel()} — tap the plan. Choose a tool to stop.` : '';
   renderStoreyTabs(); renderMetrics(); renderInspector(); renderWarnings(); renderCanvas();
 }
 
@@ -502,18 +536,25 @@ function applyDimensionEditor() {
       clampOpenings(storey); state.selection = { type: 'partition', id: partition.id };
     }); return;
   }
-  const storey = activeStorey(); const wall = getWall(storey, editor.wallId); const length = Number($('#wallLengthInput')?.value); const anchor = $('#wallAnchorInput')?.value || 'from';
-  const next = wall && resizeWall(storey.outline, wall.from, length, anchor);
-  if (!next || !outlineIsSafe(next)) { const note = elements.dimensionPopover.querySelector('.popover-note'); if (note) note.textContent = 'That would fold the outline. Drag a corner or change the anchored corner instead.'; return; }
+  const storey = activeStorey(); const wall = getWall(storey, editor.wallId); const length = Number($('#wallLengthInput')?.value);
+  const setNote = text => { const note = elements.dimensionPopover.querySelector('.popover-note'); if (note) note.textContent = text; };
+  if (!wall || !(length >= .1)) return;
+  const room = roomOwningWall(storey, wall); const side = wallSideOfRoom(room, wall, storey);
+  if (!room || !side) { setNote('Select the room to set its size.'); return; }
+  const box = boundsOf(room.polygon); const horizontal = side === 'top' || side === 'bottom';
+  const resizeSide = horizontal ? 'right' : 'bottom'; const coord = horizontal ? box.x + length : box.y + length;
+  const trial = clone(room); resizeRoomEdge(trial, resizeSide, coord);
+  const others = storey.rooms.filter(item => item.id !== room.id).map(item => boundsOf(item.polygon));
+  if (others.length && !boxesConnected([...others, boundsOf(trial.polygon)])) { setNote('That length would disconnect the room from the plan.'); return; }
   hideDimensionEditor({ redraw: false });
-  transaction('set wall length', () => { storey.outline = next; storey.boxes = []; syncWalls(storey); clampOpenings(storey); state.selection = { type: 'wall', id: editor.wallId }; });
+  transaction('set room size', () => { resizeRoomEdge(room, resizeSide, coord); rebuildStoreyFromRooms(storey); clampOpenings(storey); state.selection = { type: 'room', id: room.id }; });
 }
 
 function pointerDown(event) {
   event.preventDefault(); const point = clientPoint(event); const hit = dimensionHitAt(point);
-  if (hit && ['select', 'box', 'extend', 'room'].includes(state.tool)) { openDimensionEditor(hit); return; }
+  if (hit && (state.tool === 'select' || state.pendingBox || state.pendingRoom)) { openDimensionEditor(hit); return; }
   if (state.measurementEditor) hideDimensionEditor();
-  canvas.setPointerCapture?.(event.pointerId); state.pointers.set(event.pointerId, point);
+  try { canvas.setPointerCapture(event.pointerId); } catch { /* pointer not capturable */ } state.pointers.set(event.pointerId, point);
   if (state.pointers.size === 2) { const points = [...state.pointers.values()]; state.gesture = { startDistance: distance(points[0], points[1]), startScale: state.view.scale, startMid: midpoint(points[0], points[1]), startView: { x: state.view.x, y: state.view.y } }; state.drag = null; return; }
   state.drag = { id: event.pointerId, start: point, view: { x: state.view.x, y: state.view.y }, moved: false, mode: 'pan' };
   if (state.tool === 'partition') {
@@ -522,13 +563,12 @@ function pointerDown(event) {
     state.partitionPreview = snapped; state.drag = { ...state.drag, mode: 'partition-draw', startWorld: clone(state.partitionStart) }; renderCanvas(); return;
   }
   if (state.tool !== 'select' || state.pendingBox || state.pendingRoom) return;
-  const storey = activeStorey(); const world = worldPoint(point); const vertexIndex = closestVertexIndex(storey.outline, world, Math.max(.16, 18 / state.view.scale));
-  if (vertexIndex !== -1) {
-    state.drag = { ...state.drag, mode: 'vertex', vertexIndex, before: snapshot(), initialOutline: clone(storey.outline), changed: false };
-    return;
-  }
+  const storey = activeStorey(); const world = worldPoint(point);
   const wallHit = closestWall(storey, world, Math.max(.18, 16 / state.view.scale));
-  if (wallHit && isAxisAlignedWall(storey, wallHit.wall)) state.drag = { ...state.drag, mode: 'wall', wallIndex: wallHit.wall.from, before: snapshot(), initialOutline: clone(storey.outline), changed: false };
+  if (wallHit && isAxisAlignedWall(storey, wallHit.wall)) {
+    const room = roomOwningWall(storey, wallHit.wall); const side = wallSideOfRoom(room, wallHit.wall, storey);
+    if (room && side) state.drag = { ...state.drag, mode: 'wall', roomId: room.id, side, before: snapshot(), changed: false };
+  }
   const partitionHit = closestPartition(storey, world, Math.max(.18, 16 / state.view.scale));
   if (partitionHit) {
     const endpoint = distance(world, partitionHit.partition.from) <= distance(world, partitionHit.partition.to) ? 'from' : 'to';
@@ -563,21 +603,19 @@ function snapToOutlineAxes(point, outline, { exclude = [] } = {}) {
 }
 
 function updateGeometryDrag(point) {
-  const drag = state.drag; if (!drag || (drag.mode !== 'vertex' && drag.mode !== 'wall' && drag.mode !== 'partition-end')) return false;
-  const storey = activeStorey(); const raw = worldPoint(point); let next = null;
+  const drag = state.drag; if (!drag || (drag.mode !== 'wall' && drag.mode !== 'partition-end')) return false;
+  const storey = activeStorey(); const raw = worldPoint(point);
   if (drag.mode === 'partition-end') {
     const partition = storey.partitions?.find(item => item.id === drag.partitionId); if (!partition) return false;
     partition[drag.endpoint] = snapWorldPoint(raw, { exclude: [partition[drag.endpoint === 'from' ? 'to' : 'from']] }); clampOpenings(storey); drag.changed = true; return true;
   }
-  if (drag.mode === 'vertex') {
-    const snapped = snapToOutlineAxes(raw, drag.initialOutline, { exclude: [drag.vertexIndex] }); next = moveVertex(drag.initialOutline, drag.vertexIndex, snapped);
-  } else {
-    const from = drag.initialOutline[drag.wallIndex]; const to = drag.initialOutline[(drag.wallIndex + 1) % drag.initialOutline.length];
-    const snapped = snapToOutlineAxes(raw, drag.initialOutline, { exclude: [drag.wallIndex, (drag.wallIndex + 1) % drag.initialOutline.length] });
-    next = moveAxisAlignedWall(drag.initialOutline, drag.wallIndex, Math.abs(from.y - to.y) < 1e-8 ? snapped.y : snapped.x);
-  }
-  if (!next || !outlineIsSafe(next)) return false;
-  storey.outline = next; storey.boxes = []; syncWalls(storey); clampOpenings(storey); drag.changed = true; return true;
+  // wall drag → resize the owning room's edge, keeping the footprint connected
+  const room = storey.rooms?.find(item => item.id === drag.roomId); if (!room || !drag.side) return false;
+  const snapped = snapWorldPoint(raw); const coord = (drag.side === 'left' || drag.side === 'right') ? snapped.x : snapped.y;
+  const trial = clone(room); resizeRoomEdge(trial, drag.side, coord);
+  const others = storey.rooms.filter(item => item.id !== room.id).map(item => boundsOf(item.polygon));
+  if (others.length && !boxesConnected([...others, boundsOf(trial.polygon)])) return false;
+  resizeRoomEdge(room, drag.side, coord); if (!rebuildStoreyFromRooms(storey)) return false; clampOpenings(storey); drag.changed = true; return true;
 }
 
 function commitGeometryDrag(drag) {
@@ -635,7 +673,25 @@ function pointerUp(event) {
 
 function handleTap(point, event) {
   const storey = activeStorey(); const world = state.tool === 'draw' ? constrainedPoint(point, event) : snapWorldPoint(worldPoint(point));
-  if (state.tool === 'room' || state.tool === 'partition') return;
+  if (state.tool === 'partition') return;
+  if (state.tool === 'room') {
+    if (storey.rooms?.length) {
+      const match = closestWall(storey, world, Math.max(.3, 26 / state.view.scale));
+      if (match) { const grown = growRoomBoxFromWall(storey, match.wall); startPendingRoom(grown.box, grown.fixed); return; }
+    }
+    startPendingRoom(defaultRoomBox(world)); return;
+  }
+  if (state.tool === 'place') {
+    const placement = state.placement; if (!placement) return;
+    if (placement.mode === 'opening') {
+      const match = closestSurface(storey, world, Math.max(.25, 22 / state.view.scale)); if (!match) return;
+      if (match.surface === 'external' && (match.host.type === 'party' || match.host.heat_loss_mode === 'none')) return;
+      transaction('add opening', () => { const opening = makeOpening(placement.style, Number(match.offset_m.toFixed(2))); match.host.openings.push(opening); clampOpenings(storey); state.selection = { type: 'opening', id: opening.id }; });
+      return;
+    }
+    transaction('add symbol', () => { const item = makeSurveyItem(placement.kind, world, { group: placement.group, label: placement.label || '' }); storey.survey_items.push(item); state.selection = { type: 'item', id: item.id }; });
+    return;
+  }
   if (state.tool === 'split') {
     const match = closestWall(storey, world, Math.max(.2, 20 / state.view.scale)); if (!match) return;
     const result = splitExternalWall(storey, match.wall.id, match.point); if (!result) return;
@@ -702,7 +758,45 @@ function pointInPolygon(point, polygon = []) {
 function roomAt(storey, point) { return [...(storey.rooms || [])].reverse().find(room => pointInPolygon(point, room.polygon)); }
 function closestSurveyItem(storey, point, tolerance) { let closest = null; for (const item of storey.survey_items || []) { const gap = distance(point, item.point); if (gap <= tolerance && (!closest || gap < closest.gap)) closest = { ...item, gap }; } return closest; }
 
-function setTool(tool) { hideDimensionEditor({ redraw: false }); state.tool = tool; state.selection = null; state.boxPreview = null; state.roomPreview = null; state.partitionStart = null; state.partitionPreview = null; state.snapGuide = null; render(); }
+// ----------------------------------------------------- symbols & openings ---
+// One grouped dropdown places every symbol and opening. Each group has a colour.
+
+function populateSymbolPicker() {
+  if (!elements.symbolPicker) return;
+  const openings = Object.entries(OPENING_TYPES).map(([style, meta]) => `<option value="open:${style}">${escapeHTML(meta.label)}</option>`).join('');
+  const groups = Object.entries(SYMBOL_GROUPS).map(([key, group]) => {
+    if (key === 'other') return `<optgroup label="Other"><option value="custom">Custom label…</option></optgroup>`;
+    const options = Object.entries(group.items).map(([kind, meta]) => `<option value="sym:${kind}">${escapeHTML(meta.label)}</option>`).join('');
+    return `<optgroup label="${escapeHTML(group.label)}">${options}</optgroup>`;
+  }).join('');
+  elements.symbolPicker.innerHTML = `<option value="">Add symbol or opening…</option><optgroup label="Openings">${openings}</optgroup>${groups}`;
+  if (elements.customSymbolGroup) elements.customSymbolGroup.innerHTML = Object.entries(SYMBOL_GROUPS).map(([key, group]) => `<option value="${key}">${escapeHTML(group.label)}</option>`).join('');
+}
+
+function toggleCustomRow(show) { elements.customSymbolRow?.classList.toggle('hidden', !show); }
+
+function armPlacementFromPicker(value) {
+  if (!value) { state.placement = null; toggleCustomRow(false); if (state.tool === 'place') state.tool = 'select'; render(); return; }
+  if (value === 'custom') { toggleCustomRow(true); return; }
+  toggleCustomRow(false);
+  if (value.startsWith('open:')) state.placement = { mode: 'opening', style: value.slice(5) };
+  else if (value.startsWith('sym:')) state.placement = { mode: 'symbol', kind: value.slice(4) };
+  hideDimensionEditor({ redraw: false }); state.tool = 'place'; state.selection = null; render();
+}
+
+function armCustomSymbol() {
+  const label = (elements.customSymbolLabel?.value || '').trim(); const group = elements.customSymbolGroup?.value || 'other';
+  if (!label) { elements.customSymbolLabel?.focus(); return; }
+  state.placement = { mode: 'symbol', kind: 'custom', group, label }; state.tool = 'place'; state.selection = null; toggleCustomRow(false); render();
+}
+
+function placementLabel() {
+  const placement = state.placement; if (!placement) return '';
+  if (placement.mode === 'opening') return OPENING_TYPES[placement.style]?.label || 'opening';
+  return placement.kind === 'custom' ? (placement.label || 'custom symbol') : symbolLabel(placement.kind);
+}
+
+function setTool(tool) { hideDimensionEditor({ redraw: false }); state.tool = tool; state.selection = null; state.boxPreview = null; state.roomPreview = null; state.pendingRoom = null; state.pendingBox = null; state.roomError = ''; state.boxError = ''; state.partitionStart = null; state.partitionPreview = null; state.snapGuide = null; state.placement = null; if (elements.symbolPicker) elements.symbolPicker.value = ''; toggleCustomRow(false); render(); }
 function clearDimension() { elements.dimension.value = ''; elements.dimension.focus(); }
 function selectStorey(id) { state.activeStoreyId = id; state.selection = null; fitPlan(); render(); }
 function newStorey() { transaction('add storey', () => { const highest = Math.max(...state.plan.geometry.storeys.map(storey => storey.level)); const storey = createStorey({ name: `Storey ${highest + 2}`, level: highest + 1 }); state.plan.geometry.storeys.push(storey); state.activeStoreyId = storey.id; state.selection = null; }); fitPlan(); }
@@ -723,13 +817,74 @@ function loadSample() { showConfirm({ title: 'Load the example plan?', message: 
 
 function cancelBox() { hideDimensionEditor({ redraw: false }); state.pendingBox = null; state.boxError = ''; render(); }
 function cancelRoom() { hideDimensionEditor({ redraw: false }); state.pendingRoom = null; state.roomError = ''; render(); }
+
+// ------------------------------------------------------------ room-first ----
+// Rooms are the primitive: the outline, walls and areas derive from them.
+
+function defaultRoomBox(world) { const snapped = snapWorldPoint(world); return { x: snapped.x, y: snapped.y, width: 3, depth: 4 }; }
+
+// A room that grows outward from an existing external wall, sharing it. Returns
+// the box plus the fixed (shared) edge so typed sizes keep it against the wall.
+function growRoomBoxFromWall(storey, wall, depth = 3) {
+  const from = storey.outline[wall.from]; const to = storey.outline[wall.to]; const eps = 1e-6;
+  const horizontal = Math.abs(from.y - to.y) < eps;
+  if (horizontal) {
+    const line = from.y; const lo = Math.min(from.x, to.x); const width = Math.abs(to.x - from.x);
+    const interiorBelow = pointInPolygon({ x: (from.x + to.x) / 2, y: line + 0.05 }, storey.outline);
+    return interiorBelow
+      ? { box: { x: lo, y: line - depth, width, depth }, fixed: { side: 'bottom', line, lo } }
+      : { box: { x: lo, y: line, width, depth }, fixed: { side: 'top', line, lo } };
+  }
+  const line = from.x; const lo = Math.min(from.y, to.y); const height = Math.abs(to.y - from.y);
+  const interiorRight = pointInPolygon({ x: line + 0.05, y: (from.y + to.y) / 2 }, storey.outline);
+  return interiorRight
+    ? { box: { x: line - depth, y: lo, width: depth, depth: height }, fixed: { side: 'right', line, lo } }
+    : { box: { x: line, y: lo, width: depth, depth: height }, fixed: { side: 'left', line, lo } };
+}
+
+// Recompute a pending room's box from its width/depth, holding any shared edge.
+function boxFromPending(pending) {
+  const width = Number(pending.width) || 0; const depth = Number(pending.depth) || 0; const fixed = pending.fixed;
+  if (!fixed) return { x: pending.x, y: pending.y, width, depth };
+  if (fixed.side === 'bottom') return { x: fixed.lo, y: fixed.line - depth, width, depth };
+  if (fixed.side === 'top') return { x: fixed.lo, y: fixed.line, width, depth };
+  if (fixed.side === 'right') return { x: fixed.line - width, y: fixed.lo, width, depth };
+  if (fixed.side === 'left') return { x: fixed.line, y: fixed.lo, width, depth };
+  return { x: pending.x, y: pending.y, width, depth };
+}
+
+function setPendingRoomSize(field, value) {
+  if (!state.pendingRoom) return;
+  state.pendingRoom[field] = value === '' ? 0 : Number(value);
+  Object.assign(state.pendingRoom, boxFromPending(state.pendingRoom));
+}
+
+function startPendingRoom(box, fixed = null) {
+  const name = `Room ${(activeStorey().rooms?.length || 0) + 1}`;
+  state.pendingRoom = { ...normaliseBox(box), name, fixed }; state.roomError = ''; state.selection = null; render();
+  const widthHit = state.dimensionHits.find(hit => hit.kind === 'room' && hit.field === 'width'); if (widthHit) openDimensionEditor(widthHit);
+}
+
+// Which side of a room's rectangle an external wall lies on (for edge resizing).
+function wallSideOfRoom(room, wall, storey, eps = 1e-6) {
+  if (!room) return null; const from = storey.outline[wall.from]; const to = storey.outline[wall.to]; const box = boundsOf(room.polygon);
+  if (Math.abs(from.y - to.y) < eps) return Math.abs(from.y - box.y) < eps ? 'top' : 'bottom';
+  return Math.abs(from.x - box.x) < eps ? 'left' : 'right';
+}
+
 function commitPendingRoom() {
   const pending = state.pendingRoom; const storey = activeStorey(); if (!pending) return;
-  const box = normaliseBox(pending); const polygon = [{ x: box.x, y: box.y }, { x: box.x + box.width, y: box.y }, { x: box.x + box.width, y: box.y + box.depth }, { x: box.x, y: box.y + box.depth }];
-  if (!storey.is_closed || !polygon.every(point => pointInPolygon(point, storey.outline))) { state.roomError = 'Room zones must sit inside the closed external shell.'; render(); return; }
+  const box = normaliseBox(boxFromPending(pending));
+  if (box.width < .1 || box.depth < .1) { state.roomError = 'Enter a width and depth of at least 0.10 m.'; render(); return; }
   if (!pending.name?.trim()) { state.roomError = 'Give the room a name so it can be used in the retrofit survey.'; render(); return; }
-  transaction('add named room', () => { const room = createRoom({ name: pending.name.trim(), polygon }); storey.rooms.push(room); state.pendingRoom = null; state.roomError = ''; state.selection = { type: 'room', id: room.id }; });
-  hideDimensionEditor({ redraw: false });
+  const existing = (storey.rooms || []).map(room => boundsOf(room.polygon));
+  if (existing.length && !boxesConnected([...existing, box])) { state.roomError = 'New rooms must touch an existing room along a wall.'; render(); return; }
+  transaction('add room', () => {
+    const room = createRoom({ name: pending.name.trim(), polygon: rectPolygon(box) });
+    storey.rooms.push(room); rebuildStoreyFromRooms(storey);
+    state.pendingRoom = null; state.roomError = ''; state.selection = { type: 'room', id: room.id };
+  });
+  hideDimensionEditor({ redraw: false }); fitPlan();
 }
 function commitPendingBox() {
   const pending = state.pendingBox; const storey = activeStorey(); if (!pending) return;
@@ -777,7 +932,7 @@ function safeFilename() { return (state.plan.property_address || 'future-floor-p
 function download(blob, filename) { const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = filename; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 
 function handleAction(action) {
-  const actions = { undo, redo, 'fit-plan': fitPlan, 'clear-outline': clearOutline, 'finish-outline': finishOutline, 'sample-plan': loadSample, 'clear-dimension': clearDimension, 'new-storey': newStorey, 'duplicate-storey': duplicateStorey, 'delete-wall': deleteWall, 'delete-opening': deleteOpening, 'delete-partition': deletePartition, 'delete-room': deleteRoom, 'delete-item': deleteSurveyItem, 'split-wall': () => setTool('split'), 'apply-box': applyBox, 'cancel-box': cancelBox, 'apply-room': commitPendingRoom, 'cancel-room': cancelRoom, deselect: () => { state.selection = null; render(); }, 'export-json': exportJson, 'export-png': exportPng, 'zoom-in': () => zoomBy(1.2), 'zoom-out': () => zoomBy(.83) };
+  const actions = { undo, redo, 'fit-plan': fitPlan, 'clear-outline': clearOutline, 'finish-outline': finishOutline, 'sample-plan': loadSample, 'clear-dimension': clearDimension, 'new-storey': newStorey, 'duplicate-storey': duplicateStorey, 'delete-wall': deleteWall, 'delete-opening': deleteOpening, 'delete-partition': deletePartition, 'delete-room': deleteRoom, 'delete-item': deleteSurveyItem, 'split-wall': () => setTool('split'), 'apply-box': applyBox, 'cancel-box': cancelBox, 'apply-room': commitPendingRoom, 'cancel-room': cancelRoom, 'arm-custom': armCustomSymbol, deselect: () => { state.selection = null; render(); }, 'export-json': exportJson, 'export-png': exportPng, 'zoom-in': () => zoomBy(1.2), 'zoom-out': () => zoomBy(.83) };
   actions[action]?.();
 }
 function zoomBy(amount) { const centre = { x: frame.clientWidth / 2, y: frame.clientHeight / 2 }; const focus = worldPoint(centre); state.view.scale = Math.max(20, Math.min(220, state.view.scale * amount)); state.view.x = centre.x - focus.x*state.view.scale; state.view.y = centre.y - focus.y*state.view.scale; renderCanvas(); }
@@ -794,17 +949,27 @@ elements.north.addEventListener('input', () => transaction('set north', () => { 
 elements.inspector.addEventListener('input', event => {
   const target = event.target;
   if (target.dataset.boxField && state.pendingBox) { state.pendingBox[target.dataset.boxField] = target.value === '' ? 0 : Number(target.value); state.boxError = ''; renderCanvas(); }
-  if (target.dataset.roomDraftField && state.pendingRoom) { state.pendingRoom[target.dataset.roomDraftField] = ['width', 'depth'].includes(target.dataset.roomDraftField) ? (target.value === '' ? 0 : Number(target.value)) : target.value; state.roomError = ''; renderCanvas(); }
+  if (target.dataset.roomDraftField && state.pendingRoom) { const field = target.dataset.roomDraftField; if (field === 'width' || field === 'depth') setPendingRoomSize(field, target.value); else state.pendingRoom[field] = target.value; state.roomError = ''; renderCanvas(); }
 });
 elements.inspector.addEventListener('change', event => {
   const target = event.target;
   if (target.dataset.boxField && state.pendingBox) { state.pendingBox[target.dataset.boxField] = target.value === '' ? 0 : Number(target.value); state.boxError = ''; render(); }
-  if (target.dataset.roomDraftField && state.pendingRoom) { state.pendingRoom[target.dataset.roomDraftField] = ['width', 'depth'].includes(target.dataset.roomDraftField) ? (target.value === '' ? 0 : Number(target.value)) : target.value; state.roomError = ''; render(); }
+  if (target.dataset.roomDraftField && state.pendingRoom) { const field = target.dataset.roomDraftField; if (field === 'width' || field === 'depth') setPendingRoomSize(field, target.value); else state.pendingRoom[field] = target.value; state.roomError = ''; render(); }
   if (target.dataset.wallField) { const wall = getWall(activeStorey(), state.selection?.id); if (!wall) return; transaction('edit wall', () => { wall[target.dataset.wallField] = target.type === 'number' ? (target.value === '' ? null : Number(target.value)) : target.value; }); }
   if (target.dataset.partitionField) { const partition = activeStorey().partitions?.find(item => item.id === state.selection?.id); if (!partition) return; transaction('edit internal wall', () => { partition[target.dataset.partitionField] = target.type === 'number' ? (target.value === '' ? null : Number(target.value)) : target.value; }); }
-  if (target.dataset.openingField) { const found = findOpening(state.selection?.id); if (!found) return; transaction('edit opening', () => { found.opening[target.dataset.openingField] = target.type === 'number' ? (target.value === '' ? null : Number(target.value)) : target.value; }); }
+  if (target.dataset.openingField) { const found = findOpening(state.selection?.id); if (!found) return; transaction('edit opening', () => { const field = target.dataset.openingField; if (field === 'style') { found.opening.style = target.value; found.opening.kind = OPENING_TYPES[target.value]?.base || found.opening.kind; } else found.opening[field] = target.type === 'number' ? (target.value === '' ? null : Number(target.value)) : target.value; }); }
   if (target.dataset.roomField) { const room = activeStorey().rooms?.find(item => item.id === state.selection?.id); if (!room) return; transaction('edit room survey data', () => { room[target.dataset.roomField] = target.type === 'checkbox' ? target.checked : (target.type === 'number' ? (target.value === '' ? null : Number(target.value)) : target.value); }); }
-  if (target.dataset.itemField) { const item = activeStorey().survey_items?.find(entry => entry.id === state.selection?.id); if (!item) return; transaction('edit survey item', () => { item[target.dataset.itemField] = target.value; }); }
+  if (target.dataset.roomSize) {
+    const storey = activeStorey(); const room = storey.rooms?.find(item => item.id === state.selection?.id); if (!room) return;
+    const value = Number(target.value); if (!(value >= .1)) { render(); return; }
+    const box = boundsOf(room.polygon); const side = target.dataset.roomSize === 'width' ? 'right' : 'bottom';
+    const coord = target.dataset.roomSize === 'width' ? box.x + value : box.y + value;
+    const trial = clone(room); resizeRoomEdge(trial, side, coord);
+    const others = storey.rooms.filter(item => item.id !== room.id).map(item => boundsOf(item.polygon));
+    if (others.length && !boxesConnected([...others, boundsOf(trial.polygon)])) { state.interactionNotice = 'That size would disconnect the room from the plan.'; render(); return; }
+    transaction('resize room', () => { resizeRoomEdge(room, side, coord); rebuildStoreyFromRooms(storey); clampOpenings(storey); });
+  }
+  if (target.dataset.itemField) { const item = activeStorey().survey_items?.find(entry => entry.id === state.selection?.id); if (!item) return; transaction('edit survey item', () => { const field = target.dataset.itemField; item[field] = target.value; if (field === 'kind' && target.value !== 'custom') item.group = symbolGroupOf({ kind: target.value }); }); }
   if (target.dataset.storeyField) { transaction('edit storey', () => { activeStorey()[target.dataset.storeyField] = target.type === 'number' ? Number(target.value) : target.value; }); }
 });
 elements.dimensionPopover.addEventListener('submit', event => { event.preventDefault(); applyDimensionEditor(); });
@@ -819,12 +984,13 @@ elements.dimensionPopover.addEventListener('input', event => {
     state.boxError = ''; renderCanvas();
   }
   if (state.measurementEditor?.kind === 'room' && state.pendingRoom) {
-    if (event.target.id === 'roomWidthInput') state.pendingRoom.width = Number(event.target.value) || 0;
-    if (event.target.id === 'roomDepthInput') state.pendingRoom.depth = Number(event.target.value) || 0;
+    if (event.target.id === 'roomWidthInput') setPendingRoomSize('width', event.target.value);
+    if (event.target.id === 'roomDepthInput') setPendingRoomSize('depth', event.target.value);
     if (event.target.id === 'roomNameInput') state.pendingRoom.name = event.target.value;
     state.roomError = ''; renderCanvas();
   }
 });
+elements.symbolPicker?.addEventListener('change', event => armPlacementFromPicker(event.target.value));
 elements.dialog.addEventListener('close', () => { if (elements.dialog.returnValue === 'confirm') state.pendingConfirm?.(); state.pendingConfirm = null; });
 canvas.addEventListener('pointerdown', pointerDown); canvas.addEventListener('pointermove', pointerMove); canvas.addEventListener('pointerup', pointerUp); canvas.addEventListener('pointercancel', pointerUp); canvas.addEventListener('contextmenu', event => event.preventDefault());
 canvas.addEventListener('wheel', event => { event.preventDefault(); const before = worldPoint(clientPoint(event)); state.view.scale = Math.max(20, Math.min(220, state.view.scale * (event.deltaY < 0 ? 1.12 : .89))); const after = screenPoint(before); const at = clientPoint(event); state.view.x += at.x - after.x; state.view.y += at.y - after.y; renderCanvas(); }, { passive: false });
@@ -833,8 +999,10 @@ window.addEventListener('resize', resizeCanvas); window.addEventListener('before
 async function initialise() {
   const existing = await loadPlan(); state.plan = existing?.geometry?.storeys ? existing : createPlan(); state.activeStoreyId = state.plan.geometry.storeys[0]?.id;
   for (const storey of state.plan.geometry.storeys) { if (storey.is_closed === undefined) storey.is_closed = Boolean(storey.walls?.length); ensureStoreySurveyData(storey); }
-  state.tool = activeStorey()?.outline.length ? 'select' : 'box';
+  populateSymbolPicker();
+  state.tool = activeStorey()?.rooms?.length ? 'select' : 'room';
   resizeCanvas(); render(); requestAnimationFrame(() => { if (activeStorey()?.outline.length) fitPlan(); });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
+if (typeof window !== 'undefined') window.__ffp = { state, activeStorey, render, rebuild: () => rebuildStoreyFromRooms(activeStorey()) };
 initialise();

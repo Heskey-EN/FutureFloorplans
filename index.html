@@ -44,22 +44,24 @@
         </section>
 
         <section class="panel-section tool-section">
-          <div class="section-label">03 · Draw</div>
+          <div class="section-label">03 · Tools</div>
           <div class="tool-grid" role="toolbar" aria-label="Drawing tools">
-            <button class="tool-button" data-tool="box"><b>□</b>Draw shell</button>
-            <button class="tool-button" data-tool="extend"><b>⊞</b>Extend shell</button>
-            <button class="tool-button active" data-tool="select"><b>⌁</b>Select / pan</button>
-            <button class="tool-button" data-tool="room"><b>▧</b>Add room</button>
-            <button class="tool-button" data-tool="partition"><b>╋</b>Draw internal wall</button>
+            <button class="tool-button active" data-tool="room"><b>▤</b>Add room</button>
+            <button class="tool-button" data-tool="select"><b>⌁</b>Select / move</button>
+            <button class="tool-button" data-tool="partition"><b>╋</b>Internal wall</button>
             <button class="tool-button" data-tool="split"><b>+</b>Split wall</button>
-            <button class="tool-button" data-tool="door"><b>⌒</b>Add door</button>
-            <button class="tool-button" data-tool="window"><b>▣</b>Add window</button>
-            <button class="tool-button" data-tool="heating"><b>♨</b>Add heating</button>
-            <button class="tool-button" data-tool="draw"><b>⌗</b>Trace shell</button>
             <button class="tool-button" data-tool="north"><b>↑</b>Set north</button>
           </div>
-          <label class="dimension-field">Trace-wall length <span>metres</span><div><input id="dimensionInput" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Optional" /><button class="mini-button" data-action="clear-dimension" aria-label="Clear entered wall length">×</button></div></label>
-          <label class="toggle-row"><input id="orthogonalInput" type="checkbox" checked /><span>Orthogonal lock</span><em>⌘</em></label>
+          <label class="picker-field">Add symbol or opening
+            <select id="symbolPicker" aria-label="Choose a symbol or opening to place"></select>
+          </label>
+          <div id="customSymbolRow" class="custom-symbol hidden">
+            <label>Custom label<input id="customSymbolLabel" type="text" placeholder="e.g. MVHR unit" /></label>
+            <label>Group / colour<select id="customSymbolGroup"></select></label>
+            <button class="secondary-button full-width" data-action="arm-custom">Place custom symbol</button>
+          </div>
+          <p class="field-note" id="placementNote"></p>
+          <div class="hidden" aria-hidden="true"><input id="dimensionInput" type="hidden" /><input id="orthogonalInput" type="checkbox" checked /></div>
         </section>
 
         <section class="panel-section quick-actions">
@@ -80,7 +82,7 @@
         </div>
         <div class="canvas-frame" id="canvasFrame">
           <canvas id="planCanvas" aria-label="Floor plan drawing canvas">Your browser does not support the canvas element.</canvas>
-          <div class="canvas-hint" id="canvasHint"><b>Draw the external shell</b><span>Drag the measured building outline first. Then add named rooms, internal walls, doors and retrofit survey items inside it.</span></div>
+          <div class="canvas-hint" id="canvasHint"><b>Add your first room</b><span>Drag to size a room, then type its exact width and depth. Grow the next room off an existing wall — the outline builds itself.</span></div>
           <form class="dimension-popover hidden" id="dimensionPopover" aria-label="Set a measurement"></form>
           <button class="canvas-quick-action hidden" id="finishOutlineButton" type="button" data-action="finish-outline">Finish shape</button>
           <div class="north-indicator" id="northIndicator" aria-hidden="true"><span>↑</span><small>N</small></div>
