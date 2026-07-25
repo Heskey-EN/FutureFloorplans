@@ -1,4 +1,4 @@
-const CACHE = 'future-floor-plans-v6';
+const CACHE = 'future-floor-plans-v7';
 const APP_SHELL = ['./', './index.html', './styles.css', './js/app.js', './js/geometry.js', './js/storage.js', './manifest.webmanifest', './assets/icon.svg'];
 
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())));
@@ -17,6 +17,11 @@ self.addEventListener('fetch', event => {
     event.respondWith(fetch(event.request).then(cachePut).catch(() => caches.match(event.request).then(hit => hit || caches.match('./index.html'))));
     return;
   }
-  // Production: cache-first (offline-first app shell).
-  event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request).then(cachePut).catch(() => caches.match('./index.html'))));
+  // Production: stale-while-revalidate — serve cache instantly (fast + offline) but
+  // always refetch in the background so the NEXT load picks up a new deploy.
+  event.respondWith((async () => {
+    const cached = await caches.match(event.request);
+    const network = fetch(event.request).then(cachePut).catch(() => null);
+    return cached || (await network) || caches.match('./index.html');
+  })());
 });
